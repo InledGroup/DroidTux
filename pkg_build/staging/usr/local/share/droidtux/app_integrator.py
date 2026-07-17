@@ -52,9 +52,15 @@ def load_settings():
     if SETTINGS_FILE.exists():
         try:
             with open(SETTINGS_FILE, 'r') as f:
-                return json.load(f)
+                return {
+                    "resolution": "1280x720",
+                    "dpi": 240,
+                    "bitrate": "16M",
+                    "auto_sync": False,
+                    **json.load(f),
+                }
         except: pass
-    return {"resolution": "1280x720", "dpi": 240, "bitrate": "16M"}
+    return {"resolution": "1280x720", "dpi": 240, "bitrate": "16M", "auto_sync": False}
 
 class DroidTuxApp(Gtk.Window):
     def __init__(self):
@@ -132,10 +138,14 @@ class DroidTuxApp(Gtk.Window):
         bbox.set_layout(Gtk.ButtonBoxStyle.SPREAD)
         card.pack_start(bbox, False, False, 10)
 
-        self.sync_btn = Gtk.Button(label="START SYNC")
+        self.sync_btn = Gtk.Button(label="START SYNC (all apps)")
         self.sync_btn.get_style_context().add_class("suggested-action")
         self.sync_btn.connect("clicked", self.on_sync_clicked)
         bbox.pack_start(self.sync_btn, True, True, 0)
+
+        self.select_btn = Gtk.Button(label="CUSTOM APP SELECT")
+        self.select_btn.connect("clicked", self.on_custom_select_clicked)
+        bbox.pack_start(self.select_btn, True, True, 0)
 
         help_btn = Gtk.Button(label="USB HELP")
         help_btn.connect("clicked", self.show_usb_help)
@@ -172,6 +182,157 @@ class DroidTuxApp(Gtk.Window):
         self.sync_btn.set_sensitive(False)
         self.text_view.get_buffer().set_text("")
         threading.Thread(target=self.run_sync, daemon=True).start()
+
+    def on_custom_select_clicked(self, btn):
+        self.select_btn.set_sensitive(False)
+        threading.Thread(target=self._prepare_app_selector, daemon=True).start()
+
+    def _prepare_app_selector(self):
+        GLib.idle_add(self._update_progress_idle, "Searching for device...", 0.1)
+        serial = None
+        for _ in range(15):
+            output = self.run_adb("devices")
+            lines = [l for l in (output or "").splitlines()[1:] if l.strip()]
+            devs = [l.split()[0] for l in lines if "\tdevice" in l]
+            if devs:
+                serial = devs[0]
+                break
+            time.sleep(1)
+
+        if not serial:
+            GLib.idle_add(self._show_error_dialog, "No device found. Connect your phone via USB and enable USB debugging.")
+            GLib.idle_add(self.select_btn.set_sensitive, True)
+            return
+
+        self.serial = serial
+        cmd = "shell \"cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER\""
+        pkgs_raw = self.run_adb(cmd, serial)
+        packages = sorted(set([l.split("/")[0].strip() for l in pkgs_raw.splitlines() if "/" in l]))
+
+        GLib.idle_add(self.select_btn.set_sensitive, True)
+        GLib.idle_add(self._show_app_selector_dialog, packages, serial)
+
+    def _show_error_dialog(self, text):
+        dialog = Gtk.MessageDialog(
+            transient_for=self, flags=0,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK, text=text
+        )
+        dialog.run()
+        dialog.destroy()
+        return False
+
+    def _show_app_selector_dialog(self, packages, serial):
+        dialog = Gtk.Dialog(title="Select apps to integrate", transient_for=self, flags=0)
+        dialog.set_default_size(420, 600)
+        dialog.add_buttons(
+            "Cancel", Gtk.ResponseType.CANCEL,
+            "Integrate selected", Gtk.ResponseType.OK
+        )
+
+        content = dialog.get_content_area()
+        content.set_spacing(6)
+
+        search_entry = Gtk.SearchEntry()
+        search_entry.set_placeholder_text("Filter apps...")
+        content.pack_start(search_entry, False, False, 4)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_vexpand(True)
+        content.pack_start(scrolled, True, True, 0)
+
+        listbox = Gtk.ListBox()
+        listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        scrolled.add(listbox)
+
+        checkboxes = {}
+        icon_images = {}
+        generic_icon = Gtk.IconTheme.get_default().load_icon("application-x-executable", 32, 0)
+
+        for pkg in packages:
+            row = Gtk.ListBoxRow()
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            hbox.set_margin_top(4)
+            hbox.set_margin_bottom(4)
+            hbox.set_margin_start(6)
+            hbox.set_margin_end(6)
+
+            check = Gtk.CheckButton()
+            hbox.pack_start(check, False, False, 0)
+            checkboxes[pkg] = check
+
+            icon_img = Gtk.Image.new_from_pixbuf(generic_icon)
+            hbox.pack_start(icon_img, False, False, 0)
+            icon_images[pkg] = icon_img
+
+            label = Gtk.Label(label=pkg)
+            label.set_halign(Gtk.Align.START)
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            hbox.pack_start(label, True, True, 0)
+
+            row.add(hbox)
+            row.pkg_name = pkg
+            listbox.add(row)
+
+        listbox.show_all()
+
+        def on_search_changed(entry):
+            query = entry.get_text().lower()
+            for row in listbox.get_children():
+                row.set_visible(query in row.pkg_name.lower())
+        search_entry.connect("search-changed", on_search_changed)
+
+        select_all_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        select_all_btn = Gtk.Button(label="Select all")
+        deselect_all_btn = Gtk.Button(label="Deselect all")
+        select_all_row.pack_start(select_all_btn, True, True, 0)
+        select_all_row.pack_start(deselect_all_btn, True, True, 0)
+        content.pack_start(select_all_row, False, False, 4)
+        select_all_btn.connect("clicked", lambda b: [c.set_active(True) for c in checkboxes.values()])
+        deselect_all_btn.connect("clicked", lambda b: [c.set_active(False) for c in checkboxes.values()])
+
+        dialog.show_all()
+
+        stop_flag = {"stop": False}
+        def load_icons():
+            BRIDGE_REMOTE_DIR = "/sdcard/Android/data/com.droidtux.bridge/files"
+            for pkg in packages:
+                if stop_flag["stop"]:
+                    return
+                self.run_adb(f"shell am start-foreground-service -n com.droidtux.bridge/.IconService --es package {pkg}", serial)
+                icon_path = ICONS_DIR / f"{pkg}.png"
+                for _ in range(10):
+                    if stop_flag["stop"]:
+                        return
+                    size_raw = self.run_adb(f"shell stat -c %s {BRIDGE_REMOTE_DIR}/{pkg}.png 2>/dev/null", serial)
+                    if size_raw.isdigit() and int(size_raw) > 0:
+                        ICONS_DIR.mkdir(parents=True, exist_ok=True)
+                        self.run_adb(f"pull {BRIDGE_REMOTE_DIR}/{pkg}.png {icon_path}", serial)
+                        GLib.idle_add(self._update_selector_icon, icon_images, pkg, str(icon_path))
+                        break
+                    time.sleep(0.15)
+        icon_thread = threading.Thread(target=load_icons, daemon=True)
+        icon_thread.start()
+
+        response = dialog.run()
+        stop_flag["stop"] = True
+
+        selected = [pkg for pkg, cb in checkboxes.items() if cb.get_active()]
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.OK and selected:
+            self.sync_btn.set_sensitive(False)
+            self.select_btn.set_sensitive(False)
+            self.text_view.get_buffer().set_text("")
+            threading.Thread(target=self.run_sync, args=(selected,), daemon=True).start()
+
+    def _update_selector_icon(self, icon_images, pkg, icon_path):
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(icon_path, 32, 32, True)
+            icon_images[pkg].set_from_pixbuf(pixbuf)
+        except Exception:
+            pass
+        return False
 
     def show_usb_help(self, btn):
         dialog = Gtk.MessageDialog(
@@ -216,7 +377,7 @@ class DroidTuxApp(Gtk.Window):
                 cleanup()
                 os._exit(0)
 
-    def run_sync(self):
+    def run_sync(self, selected_packages=None):
         self.update_progress("Searching for device...", 0.1)
         serial = None
         while not serial:
@@ -248,6 +409,7 @@ class DroidTuxApp(Gtk.Window):
                 self.update_progress("Error: Enable USB Installation", 0)
                 if not self.automatic:
                     GLib.idle_add(self.sync_btn.set_sensitive, True)
+                    GLib.idle_add(self.select_btn.set_sensitive, True)
                 return
             elif "ERROR:" in res:
                 self.log(f"Warning: Bridge installation might have failed: {res}")
@@ -255,6 +417,7 @@ class DroidTuxApp(Gtk.Window):
             self.log("Error: Bridge APK not found.")
             if not self.automatic:
                 GLib.idle_add(self.sync_btn.set_sensitive, True)
+                GLib.idle_add(self.select_btn.set_sensitive, True)
             return
 
         self.update_progress("Syncing apps...", 0.4)
@@ -272,6 +435,8 @@ class DroidTuxApp(Gtk.Window):
         cmd = "shell \"cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER\""
         pkgs_raw = self.run_adb(cmd, serial)
         packages = list(set([l.split("/")[0].strip() for l in pkgs_raw.splitlines() if "/" in l]))
+        if selected_packages is not None:
+            packages = [p for p in packages if p in selected_packages]
 
         BRIDGE_REMOTE_DIR = "/sdcard/Android/data/com.droidtux.bridge/files"
         
@@ -423,6 +588,11 @@ if __name__ == "__main__":
         sys.exit(0)
     
     if args.add:
+        settings = load_settings()
+        if not settings.get("auto_sync", False):
+            print("Automatic sync is disabled in DroidTux settings.")
+            sys.exit(0)
+
         print("Starting automatic sync (Splash Mode)...")
         app = DroidTuxApp()
         app.automatic = True

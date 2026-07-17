@@ -27,7 +27,8 @@ for p in LOGO_SEARCH_PATHS:
 DEFAULT_SETTINGS = {
     "resolution": "1280x720",
     "dpi": 240,
-    "bitrate": "16M"
+    "bitrate": "16M",
+    "auto_sync": False
 }
 
 def load_settings():
@@ -101,6 +102,11 @@ class DroidTuxSettingsApp(Gtk.Window):
         self.bit_combo.set_active(bit_opts.index(self.settings["bitrate"]) if self.settings["bitrate"] in bit_opts else 2)
         grid.attach(self.bit_combo, 1, 2, 1, 1)
 
+        # Automatic sync
+        self.auto_sync_check = Gtk.CheckButton(label="Enable automatic sync on USB connect")
+        self.auto_sync_check.set_active(bool(self.settings.get("auto_sync", False)))
+        grid.attach(self.auto_sync_check, 1, 3, 1, 1)
+
         # Save Button
         save_btn = Gtk.Button(label="SAVE CHANGES")
         save_btn.connect("clicked", self.on_save_clicked)
@@ -129,6 +135,7 @@ class DroidTuxSettingsApp(Gtk.Window):
         self.settings["resolution"] = self.res_combo.get_active_text()
         self.settings["dpi"] = int(self.dpi_adj.get_value())
         self.settings["bitrate"] = self.bit_combo.get_active_text()
+        self.settings["auto_sync"] = self.auto_sync_check.get_active()
         save_settings(self.settings)
         
         dialog = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.INFO,

@@ -55,7 +55,7 @@ else
 fi
 
 echo "[*] Compilando Java..."
-javac -d "$BUILD_DIR/obj" \
+javac -encoding UTF-8 -d "$BUILD_DIR/obj" \
     -classpath "$ANDROID_JAR" \
     "$SRC_DIR/IconService.java"
 
