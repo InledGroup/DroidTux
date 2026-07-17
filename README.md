@@ -2,7 +2,7 @@
   <img src="static/logo.png" alt="DroidTux Logo" width="120">
 </p>
 
-<h1 align="center">DroidTux - Android Desktop Integrator</h1>
+<h1 align="center">DroidTux - Integrate your phone app's as desktop apps</h1>
 
 ---
 
