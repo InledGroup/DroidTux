@@ -63,7 +63,7 @@ echo "[*] Generando DEX..."
 mkdir -p "$BUILD_DIR/dex"
 d8 --release --output "$BUILD_DIR/dex" \
     --lib "$ANDROID_JAR" \
-    "$BUILD_DIR/obj/com/droidtux/bridge/IconService.class"
+    "$BUILD_DIR/obj/com/droidtux/bridge/"*.class
 
 echo "[*] Construyendo APK final..."
 cp "$BUILD_DIR/base.apk" "$BUILD_DIR/droidtux-bridge.apk"
