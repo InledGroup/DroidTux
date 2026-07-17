@@ -39,6 +39,7 @@ cp app_integrator.py %{buildroot}/usr/local/share/droidtux/
 cp droidtux_settings.py %{buildroot}/usr/local/share/droidtux/
 cp droidtux.png %{buildroot}/usr/local/share/droidtux/
 cp 99-android-integrator.rules %{buildroot}/usr/local/share/droidtux/
+cp droidtux-bridge-final.apk %{buildroot}/usr/local/share/droidtux/
 
 # Copy icons and rules
 # Copiar iconos y reglas

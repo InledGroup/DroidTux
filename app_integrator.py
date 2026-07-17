@@ -19,7 +19,19 @@ ICONS_DIR = Path.home() / ".local/share/icons/android_apps"
 DESKTOP_DIR = Path.home() / ".local/share/applications"
 SETTINGS_DIR = Path.home() / ".config/droidtux"
 SETTINGS_FILE = SETTINGS_DIR / "settings.json"
-BRIDGE_APK = BASE_DIR / "droidtux-bridge-final.apk"
+# Search for Bridge APK in multiple locations
+BRIDGE_APK_SEARCH_PATHS = [
+    BASE_DIR / "droidtux-bridge-final.apk",
+    Path("/usr/local/share/droidtux/droidtux-bridge-final.apk"),
+    Path("/usr/share/droidtux/droidtux-bridge-final.apk"),
+    Path.home() / ".local/bin/droidtux-bridge-final.apk"
+]
+
+BRIDGE_APK = None
+for p in BRIDGE_APK_SEARCH_PATHS:
+    if p.exists():
+        BRIDGE_APK = p
+        break
 
 # Search for logo in multiple locations
 LOGO_SEARCH_PATHS = [
@@ -240,7 +252,7 @@ class DroidTuxApp(Gtk.Window):
         
         bridge_pkg = "com.droidtux.bridge"
         self.log("Ensuring Bridge APK is installed and up to date...")
-        if BRIDGE_APK.exists():
+        if BRIDGE_APK and BRIDGE_APK.exists():
             res = self.run_adb(f"install -r -g {BRIDGE_APK}", serial)
             if "INSTALL_FAILED_USER_RESTRICTED" in res:
                 self.log("ERROR: USB Installation blocked by phone.")

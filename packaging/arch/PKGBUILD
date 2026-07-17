@@ -17,10 +17,11 @@ source=("app_integrator.py"
         "droidtux_settings.py"
         "droidtux.png"
         "99-android-integrator.rules"
-        "android-integrator.service")
+        "android-integrator.service"
+        "droidtux-bridge-final.apk")
 
 # Skip checksums for local files in this context
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 package() {
   # Create directories
@@ -38,6 +39,7 @@ package() {
   cp "$srcdir/droidtux_settings.py" "$pkgdir/usr/local/share/droidtux/"
   cp "$srcdir/droidtux.png" "$pkgdir/usr/local/share/droidtux/"
   cp "$srcdir/99-android-integrator.rules" "$pkgdir/usr/local/share/droidtux/"
+  cp "$srcdir/droidtux-bridge-final.apk" "$pkgdir/usr/local/share/droidtux/"
 
   # Copy icons and rules
   # Copiar iconos y reglas

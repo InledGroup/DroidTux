@@ -31,6 +31,21 @@ fi
 
 # 2. Setup paths and copy files
 echo "[2/4] Setting up paths..."
+
+# Ensure the bridge APK is built/present
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -f "$SCRIPT_DIR/droidtux-bridge-final.apk" ]; then
+    echo "[*] Bridge APK not found. Trying to build it..."
+    if (cd "$SCRIPT_DIR" && ./build_bridge.sh); then
+        echo "[+] Bridge APK built successfully."
+    else
+        echo "[!] Error: Bridge APK is missing and could not be built automatically."
+        echo "Please make sure you have the Android SDK installed, or obtain a pre-built apk,"
+        echo "and place it in the project root before installing."
+        exit 1
+    fi
+fi
+
 SYSTEM_PYTHON="/usr/bin/python3"
 
 # Install scripts

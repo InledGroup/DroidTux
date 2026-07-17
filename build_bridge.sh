@@ -18,7 +18,18 @@ if ! command -v aapt2 &> /dev/null; then
     exit 1
 fi
 
-SDK_PLATFORM="${ANDROID_SDK_ROOT:-/usr/lib/android-sdk}/platforms/android-34"
+PLATFORMS_DIR="${ANDROID_SDK_ROOT:-/usr/lib/android-sdk}/platforms"
+if [ -d "$PLATFORMS_DIR" ]; then
+    LATEST_PLATFORM=$(ls -1 "$PLATFORMS_DIR" | grep -E '^android-[0-9]+$' | sort -V | tail -n 1)
+    if [ -n "$LATEST_PLATFORM" ]; then
+        SDK_PLATFORM="$PLATFORMS_DIR/$LATEST_PLATFORM"
+        echo "[*] Usando plataforma Android detectada: $LATEST_PLATFORM"
+    else
+        SDK_PLATFORM="$PLATFORMS_DIR/android-34"
+    fi
+else
+    SDK_PLATFORM="/usr/lib/android-sdk/platforms/android-34"
+fi
 ANDROID_JAR="$SDK_PLATFORM/android.jar"
 BUILD_DIR="build_out"
 SRC_DIR="bridge_src"
