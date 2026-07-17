@@ -69,7 +69,8 @@ DEFAULT_SETTINGS = {
     "dpi": 240,
     "bitrate": "16M",
     "auto_sync": False,
-    "audio_redirect": True
+    "audio_redirect": True,
+    "v4l2_sink": ""
 }
 
 def load_settings():
@@ -93,6 +94,7 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.settings = load_settings()
         self.serial = None
         self.automatic = False
+        self.devices_map = {}
 
         # Apply CSS
         style_provider = Gtk.CssProvider()
@@ -169,10 +171,10 @@ class DroidTuxApp(Adw.ApplicationWindow):
         dev_label = Gtk.Label(label="Device:")
         dev_box.append(dev_label)
 
-        self.device_combo = Gtk.ComboBoxText()
-        self.device_combo.set_hexpand(True)
-        self.device_combo.connect("changed", self.on_device_changed)
-        dev_box.append(self.device_combo)
+        self.device_dropdown = Gtk.DropDown()
+        self.device_dropdown.set_hexpand(True)
+        self.device_dropdown.connect("notify::selected", self.on_device_changed)
+        dev_box.append(self.device_dropdown)
 
         self.refresh_btn = Gtk.Button(label="Scan & Refresh")
         self.refresh_btn.connect("clicked", self.on_refresh_clicked)
@@ -263,12 +265,11 @@ class DroidTuxApp(Adw.ApplicationWindow):
         res_label.set_xalign(1.0)
         grid.attach(res_label, 0, 0, 1, 1)
         
-        self.res_combo = Gtk.ComboBoxText()
         res_opts = ["1920x1080", "1600x900", "1280x720", "1024x576", "800x450"]
-        for opt in res_opts:
-            self.res_combo.append_text(opt)
-        self.res_combo.set_active(res_opts.index(self.settings["resolution"]) if self.settings["resolution"] in res_opts else 2)
-        grid.attach(self.res_combo, 1, 0, 1, 1)
+        self.res_dropdown = Gtk.DropDown.new_from_strings(res_opts)
+        idx = res_opts.index(self.settings["resolution"]) if self.settings["resolution"] in res_opts else 2
+        self.res_dropdown.set_selected(idx)
+        grid.attach(self.res_dropdown, 1, 0, 1, 1)
 
         # DPI
         dpi_label = Gtk.Label(label="DPI (Density):")
@@ -285,12 +286,11 @@ class DroidTuxApp(Adw.ApplicationWindow):
         bit_label.set_xalign(1.0)
         grid.attach(bit_label, 0, 2, 1, 1)
         
-        self.bit_combo = Gtk.ComboBoxText()
         bit_opts = ["4M", "8M", "16M", "32M"]
-        for opt in bit_opts:
-            self.bit_combo.append_text(opt)
-        self.bit_combo.set_active(bit_opts.index(self.settings["bitrate"]) if self.settings["bitrate"] in bit_opts else 2)
-        grid.attach(self.bit_combo, 1, 2, 1, 1)
+        self.bit_dropdown = Gtk.DropDown.new_from_strings(bit_opts)
+        idx = bit_opts.index(self.settings["bitrate"]) if self.settings["bitrate"] in bit_opts else 2
+        self.bit_dropdown.set_selected(idx)
+        grid.attach(self.bit_dropdown, 1, 2, 1, 1)
 
         # Automatic sync
         self.auto_sync_check = Gtk.CheckButton(label="Enable automatic sync on USB connect")
@@ -301,6 +301,16 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.audio_check = Gtk.CheckButton(label="Redirect Audio to PC (scrcpy 2.0+)")
         self.audio_check.set_active(bool(self.settings.get("audio_redirect", True)))
         grid.attach(self.audio_check, 1, 4, 1, 1)
+
+        # V4L2 webcam sink
+        v4l2_label = Gtk.Label(label="V4L2 Loopback (Webcam):")
+        v4l2_label.set_xalign(1.0)
+        grid.attach(v4l2_label, 0, 5, 1, 1)
+        
+        self.v4l2_entry = Gtk.Entry()
+        self.v4l2_entry.set_placeholder_text("e.g. /dev/video2 (optional)")
+        self.v4l2_entry.set_text(self.settings.get("v4l2_sink", ""))
+        grid.attach(self.v4l2_entry, 1, 5, 1, 1)
 
         # Save Button
         save_btn = Gtk.Button(label="SAVE CHANGES")
@@ -314,11 +324,14 @@ class DroidTuxApp(Adw.ApplicationWindow):
         vbox.append(help_btn)
 
     def on_save_clicked(self, btn):
-        self.settings["resolution"] = self.res_combo.get_active_text()
+        res_item = self.res_dropdown.get_selected_item()
+        self.settings["resolution"] = res_item.get_string() if res_item else "1280x720"
         self.settings["dpi"] = int(self.dpi_adj.get_value())
-        self.settings["bitrate"] = self.bit_combo.get_active_text()
+        bit_item = self.bit_dropdown.get_selected_item()
+        self.settings["bitrate"] = bit_item.get_string() if bit_item else "16M"
         self.settings["auto_sync"] = self.auto_sync_check.get_active()
         self.settings["audio_redirect"] = self.audio_check.get_active()
+        self.settings["v4l2_sink"] = self.v4l2_entry.get_text().strip()
         save_settings(self.settings)
         
         dialog = Adw.MessageDialog(transient_for=self, heading="Settings Saved",
@@ -356,10 +369,9 @@ class DroidTuxApp(Adw.ApplicationWindow):
 
     def on_refresh_clicked(self, btn):
         btn.set_sensitive(False)
-        self.device_combo.set_sensitive(False)
-        self.device_combo.remove_all()
-        self.device_combo.append("scanning", "Scanning network...")
-        self.device_combo.set_active(0)
+        self.device_dropdown.set_sensitive(False)
+        self.device_dropdown.set_model(Gtk.StringList.new(["Scanning network..."]))
+        self.device_dropdown.set_selected(0)
         
         def run_refresh():
             discovered_ips = []
@@ -422,39 +434,46 @@ class DroidTuxApp(Adw.ApplicationWindow):
         threading.Thread(target=run_refresh, daemon=True).start()
 
     def _update_devices_combo(self, devices_info, btn):
-        self.device_combo.remove_all()
+        self.devices_map.clear()
         if not devices_info:
-            self.device_combo.append("none", "No devices found")
-            self.device_combo.set_active(0)
+            self.device_dropdown.set_model(Gtk.StringList.new(["No devices found"]))
+            self.device_dropdown.set_selected(0)
             self.sync_btn.set_sensitive(False)
             self.select_btn.set_sensitive(False)
             self.camera_btn.set_sensitive(False)
             self.serial = None
         else:
+            display_names = []
             for serial, display_name in devices_info:
-                self.device_combo.append(serial, display_name)
-            self.device_combo.set_active(0)
+                display_names.append(display_name)
+                self.devices_map[display_name] = serial
+            
+            self.device_dropdown.set_model(Gtk.StringList.new(display_names))
+            self.device_dropdown.set_selected(0)
             self.sync_btn.set_sensitive(True)
             self.select_btn.set_sensitive(True)
             self.camera_btn.set_sensitive(True)
             self.serial = devices_info[0][0]
             
         btn.set_sensitive(True)
-        self.device_combo.set_sensitive(True)
+        self.device_dropdown.set_sensitive(True)
         return False
 
-    def on_device_changed(self, combo):
-        active_id = combo.get_active_id()
-        if active_id and active_id not in ["scanning", "none"]:
-            self.serial = active_id
-            self.sync_btn.set_sensitive(True)
-            self.select_btn.set_sensitive(True)
-            self.camera_btn.set_sensitive(True)
-        else:
-            self.serial = None
-            self.sync_btn.set_sensitive(False)
-            self.select_btn.set_sensitive(False)
-            self.camera_btn.set_sensitive(False)
+    def on_device_changed(self, dropdown, pspec):
+        selected_item = dropdown.get_selected_item()
+        if selected_item:
+            active_text = selected_item.get_string()
+            if active_text and active_text not in ["Scanning network...", "No devices found"]:
+                self.serial = self.devices_map.get(active_text)
+                self.sync_btn.set_sensitive(True)
+                self.select_btn.set_sensitive(True)
+                self.camera_btn.set_sensitive(True)
+                return
+        
+        self.serial = None
+        self.sync_btn.set_sensitive(False)
+        self.select_btn.set_sensitive(False)
+        self.camera_btn.set_sensitive(False)
 
     def on_sync_clicked(self, btn):
         self.sync_btn.set_sensitive(False)
@@ -466,18 +485,75 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.select_btn.set_sensitive(False)
         threading.Thread(target=self._prepare_app_selector, daemon=True).start()
 
+    def _set_button_spinner(self, btn, show_spinner, label_text):
+        if show_spinner:
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            box.set_halign(Gtk.Align.CENTER)
+            box.set_valign(Gtk.Align.CENTER)
+            
+            spinner = Gtk.Spinner()
+            spinner.start()
+            box.append(spinner)
+            
+            label = Gtk.Label(label=label_text)
+            box.append(label)
+            
+            btn.set_child(box)
+            btn.set_sensitive(False)
+        else:
+            btn.set_child(None)
+            btn.set_label(label_text)
+            btn.set_sensitive(True)
+        return False
+
     def on_camera_clicked(self, btn):
         if not self.serial:
             self._show_error_dialog("No device selected.")
             return
         
+        self.settings = load_settings()
+        v4l2 = self.settings.get("v4l2_sink", "").strip()
+        
+        GLib.idle_add(self._set_button_spinner, btn, True, "Starting Camera...")
+        
         def run_camera():
             self.log(f"Starting phone camera feed on {self.serial}...")
-            # Run scrcpy with camera video source
-            subprocess.run(
-                f"scrcpy -s {self.serial} --video-source=camera --always-on-top",
-                shell=True
-            )
+            
+            # Using SDL_VIDEODRIVER=x11 allows OBS under Wayland to capture this window via standard X11 Window Capture
+            env_vars = os.environ.copy()
+            env_vars["SDL_VIDEODRIVER"] = "x11"
+            
+            cmd = f"scrcpy -s {self.serial} --video-source=camera"
+            if v4l2:
+                self.log(f"Redirecting video output to V4L2 sink {v4l2}...")
+                cmd += f" --v4l2-sink={v4l2}"
+            else:
+                cmd += " --always-on-top"
+                
+            try:
+                proc = subprocess.Popen(
+                    cmd, shell=True, env=env_vars,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
+                
+                spinner_active = True
+                while True:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    print(f"[scrcpy] {line.strip()}")
+                    if spinner_active and ("Texture:" in line or "v4l2-sink" in line or "INFO: Renderer:" in line):
+                        GLib.idle_add(self._set_button_spinner, btn, False, "PHONE CAMERA")
+                        spinner_active = False
+                
+                proc.wait()
+                if spinner_active:
+                    GLib.idle_add(self._set_button_spinner, btn, False, "PHONE CAMERA")
+            except Exception as e:
+                self.log(f"Error starting camera: {e}")
+                GLib.idle_add(self._set_button_spinner, btn, False, "PHONE CAMERA")
             
         threading.Thread(target=run_camera, daemon=True).start()
 
@@ -808,9 +884,7 @@ def cleanup():
     print("Cleaning DroidTux apps...")
     prefixes = ["dtapp-*.desktop", "droidtux-*.desktop"]
     for pattern in prefixes:
-        for f in DESKTOP_DIR.glob(pattern):
-            try: f.unlink()
-            except: pass
+        [f.unlink() for f in DESKTOP_DIR.glob(pattern) if f.exists()]
 
     desktop_folders = [Path.home() / "Desktop", Path.home() / "Escritorio"]
     try:
@@ -821,9 +895,7 @@ def cleanup():
     for folder in set(desktop_folders):
         if folder.exists():
             for pattern in prefixes:
-                for f in folder.glob(pattern):
-                    try: f.unlink()
-                    except: pass
+                [f.unlink() for f in folder.glob(pattern) if f.exists()]
 
     if ICONS_DIR.exists(): shutil.rmtree(ICONS_DIR)
     subprocess.run(["update-desktop-database", str(DESKTOP_DIR)], capture_output=True)
