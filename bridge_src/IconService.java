@@ -25,13 +25,39 @@ public class IconService extends Service {
     private static final String TAG = "DroidTuxBridge";
 
     @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
-        String packageName = intent.getStringExtra("package");
+    public int onStartCommand(Intent intent, final int flags, final int startId) {
+        final String packageName = intent.getStringExtra("package");
         if (packageName != null) {
-            extractIcon(packageName);
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    if (packageName.equals("all")) {
+                        extractAllIcons();
+                    } else {
+                        extractIcon(packageName);
+                    }
+                    stopSelf();
+                }
+            }).start();
+        } else {
+            stopSelf();
         }
-        stopSelf();
         return START_NOT_STICKY;
+    }
+
+    private void extractAllIcons() {
+        try {
+            PackageManager pm = getPackageManager();
+            Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
+            mainIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+            java.util.List<android.content.pm.ResolveInfo> apps = pm.queryIntentActivities(mainIntent, 0);
+            for (android.content.pm.ResolveInfo app : apps) {
+                String pkg = app.activityInfo.packageName;
+                extractIcon(pkg);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error query launcher apps: " + e.getMessage());
+        }
     }
 
     private void extractIcon(String pkg) {

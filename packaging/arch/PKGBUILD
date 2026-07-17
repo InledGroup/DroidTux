@@ -9,7 +9,7 @@ pkgdesc_es="Integrador de Aplicaciones Android - Integra tus aplicaciones de And
 arch=('any')
 url="https://github.com/InledGroup/DroidTux"
 license=('MIT')
-depends=('scrcpy' 'android-tools' 'python-gobject' 'desktop-file-utils' 'sudo')
+depends=('scrcpy' 'android-tools' 'python-gobject' 'desktop-file-utils' 'sudo' 'gtk4')
 install=droidtux.install
 
 # We use the local files for building the package

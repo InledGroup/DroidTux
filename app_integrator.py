@@ -7,11 +7,12 @@ import json
 import time
 from pathlib import Path
 import gi
-
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GLib, Pango, Gio, GdkPixbuf
 import sys
 import argparse
+
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Gdk, GLib, Pango, Gio, GdkPixbuf, Adw
 
 # Path Configuration
 BASE_DIR = Path(__file__).resolve().parent
@@ -19,6 +20,7 @@ ICONS_DIR = Path.home() / ".local/share/icons/android_apps"
 DESKTOP_DIR = Path.home() / ".local/share/applications"
 SETTINGS_DIR = Path.home() / ".config/droidtux"
 SETTINGS_FILE = SETTINGS_DIR / "settings.json"
+
 # Search for Bridge APK in multiple locations
 BRIDGE_APK_SEARCH_PATHS = [
     BASE_DIR / "droidtux-bridge-final.apk",
@@ -50,7 +52,7 @@ for p in LOGO_SEARCH_PATHS:
 # Native CSS Styling
 NORD_CSS = b"""
 .header { padding: 20px; border-bottom: 2px solid @theme_selected_bg_color; }
-.title { font-size: 24px; font-weight: bold; }
+.brand-title { font-size: 24px; font-weight: bold; }
 .subtitle { font-size: 14px; opacity: 0.8; }
 .card { border-radius: 12px; margin: 20px; padding: 20px; border: 1px solid @theme_bg_color; }
 .log-view { font-family: 'Monospace'; font-size: 12px; border-radius: 8px; }
@@ -60,28 +62,30 @@ progressbar progress { border-radius: 5px; }
 .splash-label { font-size: 13px; font-weight: normal; color: @theme_fg_color; }
 """
 
+DEFAULT_SETTINGS = {
+    "resolution": "1280x720",
+    "dpi": 240,
+    "bitrate": "16M",
+    "auto_sync": False
+}
+
 def load_settings():
     if SETTINGS_FILE.exists():
         try:
             with open(SETTINGS_FILE, 'r') as f:
-                return {
-                    "resolution": "1280x720",
-                    "dpi": 240,
-                    "bitrate": "16M",
-                    "auto_sync": False,
-                    **json.load(f),
-                }
+                return {**DEFAULT_SETTINGS, **json.load(f)}
         except: pass
-    return {"resolution": "1280x720", "dpi": 240, "bitrate": "16M", "auto_sync": False}
+    return DEFAULT_SETTINGS.copy()
 
-class DroidTuxApp(Gtk.Window):
-    def __init__(self):
-        super().__init__(title="DroidTux Dashboard")
+def save_settings(settings):
+    SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_FILE, 'w') as f:
+        json.dump(settings, f, indent=4)
+
+class DroidTuxApp(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="DroidTux Dashboard")
         self.set_default_size(500, 700)
-        self.set_position(Gtk.WindowPosition.CENTER)
-        
-        if LOGO_PATH:
-            self.set_icon_from_file(str(LOGO_PATH))
         
         self.settings = load_settings()
         self.serial = None
@@ -90,78 +94,232 @@ class DroidTuxApp(Gtk.Window):
         # Apply CSS
         style_provider = Gtk.CssProvider()
         style_provider.load_from_data(NORD_CSS)
-        Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(), style_provider,
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), style_provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
 
         self.setup_ui()
-        self.show_all()
         
     def setup_ui(self):
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.add(vbox)
+        # Main Toolbar View
+        toolbar_view = Adw.ToolbarView()
+        hb = Adw.HeaderBar()
+        toolbar_view.add_top_bar(hb)
+        self.set_content(toolbar_view)
 
-        # Header
+        # View Stack
+        self.stack = Adw.ViewStack()
+        toolbar_view.set_content(self.stack)
+
+        # View Switcher in Header Bar
+        switcher = Adw.ViewSwitcher(stack=self.stack)
+        hb.set_title_widget(switcher)
+
+        # PAGE 1: Sync Dashboard
+        sync_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.setup_sync_page(sync_box)
+        self.stack.add_titled_with_icon(
+            sync_box,
+            "sync",
+            "Sync",
+            "view-refresh-symbolic"
+        )
+
+        # PAGE 2: Settings
+        settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.setup_settings_page(settings_box)
+        self.stack.add_titled_with_icon(
+            settings_box,
+            "settings",
+            "Settings",
+            "preferences-system-symbolic"
+        )
+
+    def setup_sync_page(self, vbox):
+        # Header Box
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        header.get_style_context().add_class("header")
+        header.add_css_class("header")
         
-        if LOGO_PATH.exists():
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
-                str(LOGO_PATH), 120, 120, True
-            )
-            img = Gtk.Image.new_from_pixbuf(pixbuf)
-            header.pack_start(img, False, False, 0)
+        if LOGO_PATH and LOGO_PATH.exists():
+            img = Gtk.Image.new_from_file(str(LOGO_PATH))
+            img.set_pixel_size(120)
+            header.append(img)
 
-        title = Gtk.Label(label="DROIDTUX")
-        title.get_style_context().add_class("title")
-        header.pack_start(title, False, False, 0)
+        title = Gtk.Label(label="DroidTux")
+        title.add_css_class("brand-title")
+        header.append(title)
         
         subtitle = Gtk.Label(label="Android Desktop Integrator")
-        subtitle.get_style_context().add_class("subtitle")
-        header.pack_start(subtitle, False, False, 0)
-        vbox.pack_start(header, False, False, 0)
+        subtitle.add_css_class("subtitle")
+        header.append(subtitle)
+        vbox.append(header)
 
         # Main Card
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
-        card.get_style_context().add_class("card")
-        vbox.pack_start(card, True, True, 0)
+        card.add_css_class("card")
+        card.set_vexpand(True)
+        vbox.append(card)
 
         self.status_label = Gtk.Label(label="Ready to sync")
         self.status_label.set_halign(Gtk.Align.CENTER)
-        card.pack_start(self.status_label, False, False, 0)
+        card.append(self.status_label)
 
         self.progress_bar = Gtk.ProgressBar()
-        card.pack_start(self.progress_bar, False, False, 0)
+        card.append(self.progress_bar)
 
         # Log Area
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_vexpand(True)
-        scrolled.get_style_context().add_class("log-view")
+        scrolled.add_css_class("log-view")
         self.text_view = Gtk.TextView()
         self.text_view.set_editable(False)
         self.text_view.set_cursor_visible(False)
         self.text_view.set_wrap_mode(Gtk.WrapMode.WORD)
-        scrolled.add(self.text_view)
-        card.pack_start(scrolled, True, True, 0)
+        scrolled.set_child(self.text_view)
+        card.append(scrolled)
 
         # Action Buttons
-        bbox = Gtk.ButtonBox(orientation=Gtk.Orientation.HORIZONTAL)
-        bbox.set_layout(Gtk.ButtonBoxStyle.SPREAD)
-        card.pack_start(bbox, False, False, 10)
+        bbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        bbox.set_homogeneous(True)
+        bbox.set_margin_top(10)
+        bbox.set_margin_bottom(10)
+        card.append(bbox)
 
         self.sync_btn = Gtk.Button(label="START SYNC (all apps)")
-        self.sync_btn.get_style_context().add_class("suggested-action")
+        self.sync_btn.add_css_class("suggested-action")
         self.sync_btn.connect("clicked", self.on_sync_clicked)
-        bbox.pack_start(self.sync_btn, True, True, 0)
+        bbox.append(self.sync_btn)
 
         self.select_btn = Gtk.Button(label="CUSTOM APP SELECT")
         self.select_btn.connect("clicked", self.on_custom_select_clicked)
-        bbox.pack_start(self.select_btn, True, True, 0)
+        bbox.append(self.select_btn)
 
         help_btn = Gtk.Button(label="USB HELP")
         help_btn.connect("clicked", self.show_usb_help)
-        bbox.pack_start(help_btn, True, True, 0)
+        bbox.append(help_btn)
+
+    def setup_settings_page(self, vbox):
+        vbox.set_spacing(10)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+
+        # Logo
+        if LOGO_PATH and LOGO_PATH.exists():
+            img = Gtk.Image.new_from_file(str(LOGO_PATH))
+            img.set_pixel_size(80)
+            vbox.append(img)
+
+        title = Gtk.Label()
+        title.set_markup("<span size='large' weight='bold'>DroidTux Control Panel</span>")
+        vbox.append(title)
+
+        grid = Gtk.Grid(column_spacing=15, row_spacing=15)
+        grid.set_halign(Gtk.Align.CENTER)
+        vbox.append(grid)
+
+        # Resolution
+        res_label = Gtk.Label(label="Resolution:")
+        res_label.set_xalign(1.0)
+        grid.attach(res_label, 0, 0, 1, 1)
+        
+        self.res_combo = Gtk.ComboBoxText()
+        res_opts = ["1920x1080", "1600x900", "1280x720", "1024x576", "800x450"]
+        for opt in res_opts:
+            self.res_combo.append_text(opt)
+        self.res_combo.set_active(res_opts.index(self.settings["resolution"]) if self.settings["resolution"] in res_opts else 2)
+        grid.attach(self.res_combo, 1, 0, 1, 1)
+
+        # DPI
+        dpi_label = Gtk.Label(label="DPI (Density):")
+        dpi_label.set_xalign(1.0)
+        grid.attach(dpi_label, 0, 1, 1, 1)
+        
+        self.dpi_adj = Gtk.Adjustment(value=self.settings["dpi"], lower=120, upper=480, step_increment=10, page_increment=40, page_size=0)
+        self.dpi_scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.dpi_adj)
+        self.dpi_scale.set_size_request(200, -1)
+        grid.attach(self.dpi_scale, 1, 1, 1, 1)
+
+        # Bitrate
+        bit_label = Gtk.Label(label="Bitrate:")
+        bit_label.set_xalign(1.0)
+        grid.attach(bit_label, 0, 2, 1, 1)
+        
+        self.bit_combo = Gtk.ComboBoxText()
+        bit_opts = ["4M", "8M", "16M", "32M"]
+        for opt in bit_opts:
+            self.bit_combo.append_text(opt)
+        self.bit_combo.set_active(bit_opts.index(self.settings["bitrate"]) if self.settings["bitrate"] in bit_opts else 2)
+        grid.attach(self.bit_combo, 1, 2, 1, 1)
+
+        # Automatic sync
+        self.auto_sync_check = Gtk.CheckButton(label="Enable automatic sync on USB connect")
+        self.auto_sync_check.set_active(bool(self.settings.get("auto_sync", False)))
+        grid.attach(self.auto_sync_check, 1, 3, 1, 1)
+
+        # Save Button
+        save_btn = Gtk.Button(label="SAVE CHANGES")
+        save_btn.connect("clicked", self.on_save_clicked)
+        save_btn.add_css_class("suggested-action")
+        vbox.append(save_btn)
+
+        # Help Buttons
+        help_label = Gtk.Label()
+        help_label.set_markup("<span weight='bold'>Help &amp; Configuration</span>")
+        vbox.append(help_label)
+
+        h_bbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        vbox.append(h_bbox)
+
+        btns = [
+            ("ADB Debugging", self.show_adb_help),
+            ("SecondScreen", self.show_ss_help),
+            ("USB Installation", self.show_usb_help)
+        ]
+        for label, cmd in btns:
+            b = Gtk.Button(label=label)
+            b.connect("clicked", cmd)
+            h_bbox.append(b)
+
+    def on_save_clicked(self, btn):
+        self.settings["resolution"] = self.res_combo.get_active_text()
+        self.settings["dpi"] = int(self.dpi_adj.get_value())
+        self.settings["bitrate"] = self.bit_combo.get_active_text()
+        self.settings["auto_sync"] = self.auto_sync_check.get_active()
+        save_settings(self.settings)
+        
+        dialog = Adw.MessageDialog(transient_for=self, heading="Settings Saved",
+                                  body="Changes will be applied on next connection.")
+        dialog.add_response("ok", "OK")
+        dialog.set_default_response("ok")
+        dialog.connect("response", lambda d, r: d.destroy())
+        dialog.present()
+
+    def show_help(self, title, content):
+        dialog = Adw.MessageDialog(transient_for=self, heading=title, body=content)
+        dialog.add_response("ok", "OK")
+        dialog.set_default_response("ok")
+        dialog.connect("response", lambda d, r: d.destroy())
+        dialog.present()
+
+    def show_adb_help(self, btn):
+        self.show_help("ADB Debugging", 
+            "1. Go to 'Settings' on your phone.\n"
+            "2. 'About phone' -> Tap 'Build number' 7 times.\n"
+            "3. Go back -> 'System' -> 'Developer options'.\n"
+            "4. Enable 'USB Debugging'.")
+
+    def show_ss_help(self, btn):
+        self.show_help("SecondScreen", 
+            "1. Install SecondScreen from Play Store.\n"
+            "2. Create a new profile named exactly 'Linux'.\n"
+            "3. Set resolution to 1920x1080 and density to 240.")
+
+    def show_usb_help(self, btn):
+        self.show_help("USB Installation", 
+            "On Xiaomi/MIUI phones:\n\n1. Developer options -> Enable 'Install via USB'.\n2. May require Mi Account login.")
 
     def log(self, message):
         print(f"[DroidTux] {message}")
@@ -173,7 +331,6 @@ class DroidTuxApp(Gtk.Window):
     def _log_idle(self, message):
         buffer = self.text_view.get_buffer()
         buffer.insert(buffer.get_end_iter(), f"> {message}\n")
-        # Scroll to bottom
         adj = self.text_view.get_vadjustment()
         adj.set_value(adj.get_upper() - adj.get_page_size())
         return False
@@ -225,41 +382,60 @@ class DroidTuxApp(Gtk.Window):
         GLib.idle_add(self._show_app_selector_dialog, packages, serial)
 
     def _show_error_dialog(self, text):
-        dialog = Gtk.MessageDialog(
-            transient_for=self, flags=0,
-            message_type=Gtk.MessageType.ERROR,
-            buttons=Gtk.ButtonsType.OK, text=text
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Error",
+            body=text
         )
-        dialog.run()
-        dialog.destroy()
+        dialog.add_response("ok", "OK")
+        dialog.set_default_response("ok")
+        dialog.connect("response", lambda d, r: d.destroy())
+        dialog.present()
         return False
 
     def _show_app_selector_dialog(self, packages, serial):
-        dialog = Gtk.Dialog(title="Select apps to integrate", transient_for=self, flags=0)
-        dialog.set_default_size(420, 600)
-        dialog.add_buttons(
-            "Cancel", Gtk.ResponseType.CANCEL,
-            "Integrate selected", Gtk.ResponseType.OK
+        dialog = Adw.Window(
+            title="Select apps to integrate",
+            transient_for=self,
+            modal=True,
+            default_width=420,
+            default_height=600
         )
 
-        content = dialog.get_content_area()
-        content.set_spacing(6)
+        hb = Adw.HeaderBar()
+        
+        cancel_btn = Gtk.Button(label="Cancel")
+        integrate_btn = Gtk.Button(label="Integrate selected")
+        integrate_btn.add_css_class("suggested-action")
+        
+        hb.pack_start(cancel_btn)
+        hb.pack_end(integrate_btn)
+
+        toolbar_view = Adw.ToolbarView()
+        toolbar_view.add_top_bar(hb)
+        dialog.set_content(toolbar_view)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        content.set_margin_top(10)
+        content.set_margin_bottom(10)
+        content.set_margin_start(10)
+        content.set_margin_end(10)
+        toolbar_view.set_content(content)
 
         search_entry = Gtk.SearchEntry()
         search_entry.set_placeholder_text("Filter apps...")
-        content.pack_start(search_entry, False, False, 4)
+        content.append(search_entry)
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_vexpand(True)
-        content.pack_start(scrolled, True, True, 0)
+        content.append(scrolled)
 
         listbox = Gtk.ListBox()
         listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        scrolled.add(listbox)
+        scrolled.set_child(listbox)
 
         checkboxes = {}
         icon_images = {}
-        generic_icon = Gtk.IconTheme.get_default().load_icon("application-x-executable", 32, 0)
 
         for pkg in packages:
             row = Gtk.ListBoxRow()
@@ -270,100 +446,122 @@ class DroidTuxApp(Gtk.Window):
             hbox.set_margin_end(6)
 
             check = Gtk.CheckButton()
-            hbox.pack_start(check, False, False, 0)
+            hbox.append(check)
             checkboxes[pkg] = check
 
-            icon_img = Gtk.Image.new_from_pixbuf(generic_icon)
-            hbox.pack_start(icon_img, False, False, 0)
+            icon_img = Gtk.Image.new_from_icon_name("application-x-executable")
+            icon_img.set_icon_size(Gtk.IconSize.LARGE)
+            
+            # Use cached local icon if already extracted previously
+            local_icon = ICONS_DIR / f"{pkg}.png"
+            if local_icon.exists():
+                try:
+                    icon_img.set_from_file(str(local_icon))
+                    icon_img.set_pixel_size(32)
+                except:
+                    pass
+
+            hbox.append(icon_img)
             icon_images[pkg] = icon_img
 
             label = Gtk.Label(label=pkg)
             label.set_halign(Gtk.Align.START)
             label.set_ellipsize(Pango.EllipsizeMode.END)
-            hbox.pack_start(label, True, True, 0)
+            hbox.append(label)
 
-            row.add(hbox)
+            row.set_child(hbox)
             row.pkg_name = pkg
-            listbox.add(row)
-
-        listbox.show_all()
+            listbox.append(row)
 
         def on_search_changed(entry):
             query = entry.get_text().lower()
-            for row in listbox.get_children():
-                row.set_visible(query in row.pkg_name.lower())
+            child = listbox.get_first_child()
+            while child:
+                child.set_visible(query in child.pkg_name.lower())
+                child = child.get_next_sibling()
         search_entry.connect("search-changed", on_search_changed)
 
         select_all_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         select_all_btn = Gtk.Button(label="Select all")
         deselect_all_btn = Gtk.Button(label="Deselect all")
-        select_all_row.pack_start(select_all_btn, True, True, 0)
-        select_all_row.pack_start(deselect_all_btn, True, True, 0)
-        content.pack_start(select_all_row, False, False, 4)
+        select_all_row.append(select_all_btn)
+        select_all_row.append(deselect_all_btn)
+        select_all_btn.set_hexpand(True)
+        deselect_all_btn.set_hexpand(True)
+        content.append(select_all_row)
+        
         select_all_btn.connect("clicked", lambda b: [c.set_active(True) for c in checkboxes.values()])
         deselect_all_btn.connect("clicked", lambda b: [c.set_active(False) for c in checkboxes.values()])
 
-        dialog.show_all()
-
         stop_flag = {"stop": False}
         def load_icons():
+            # Trigger asynchronous extraction of all launcher app icons on phone
+            self.run_adb("shell am start-foreground-service -n com.droidtux.bridge/.IconService --es package all", serial)
+            time.sleep(1.0)
+            
             BRIDGE_REMOTE_DIR = "/sdcard/Android/data/com.droidtux.bridge/files"
-            for pkg in packages:
+            
+            # Periodically pull directory content and update icons in UI
+            for _ in range(20):
                 if stop_flag["stop"]:
                     return
-                self.run_adb(f"shell am start-foreground-service -n com.droidtux.bridge/.IconService --es package {pkg}", serial)
-                icon_path = ICONS_DIR / f"{pkg}.png"
-                for _ in range(10):
-                    if stop_flag["stop"]:
-                        return
-                    size_raw = self.run_adb(f"shell stat -c %s {BRIDGE_REMOTE_DIR}/{pkg}.png 2>/dev/null", serial)
-                    if size_raw.isdigit() and int(size_raw) > 0:
-                        ICONS_DIR.mkdir(parents=True, exist_ok=True)
-                        self.run_adb(f"pull {BRIDGE_REMOTE_DIR}/{pkg}.png {icon_path}", serial)
+                # Pull the entire folder to ICONS_DIR (only downloads modifications)
+                self.run_adb(f"pull {BRIDGE_REMOTE_DIR}/. {ICONS_DIR}/", serial)
+                
+                # Scan local ICONS_DIR and update Gtk.Image widgets in list box
+                for pkg in packages:
+                    icon_path = ICONS_DIR / f"{pkg}.png"
+                    if icon_path.exists():
                         GLib.idle_add(self._update_selector_icon, icon_images, pkg, str(icon_path))
-                        break
-                    time.sleep(0.15)
+                
+                time.sleep(1.0)
+
         icon_thread = threading.Thread(target=load_icons, daemon=True)
         icon_thread.start()
 
-        response = dialog.run()
-        stop_flag["stop"] = True
+        def on_cancel(btn):
+            stop_flag["stop"] = True
+            dialog.destroy()
+        cancel_btn.connect("clicked", on_cancel)
 
-        selected = [pkg for pkg, cb in checkboxes.items() if cb.get_active()]
-        dialog.destroy()
+        def on_integrate(btn):
+            stop_flag["stop"] = True
+            selected = [pkg for pkg, cb in checkboxes.items() if cb.get_active()]
+            dialog.destroy()
 
-        if response == Gtk.ResponseType.OK and selected:
-            self.sync_btn.set_sensitive(False)
-            self.select_btn.set_sensitive(False)
-            self.text_view.get_buffer().set_text("")
-            threading.Thread(target=self.run_sync, args=(selected,), daemon=True).start()
+            if selected:
+                self.sync_btn.set_sensitive(False)
+                self.select_btn.set_sensitive(False)
+                self.text_view.get_buffer().set_text("")
+                threading.Thread(target=self.run_sync, args=(selected,), daemon=True).start()
+
+        integrate_btn.connect("clicked", on_integrate)
+        dialog.present()
 
     def _update_selector_icon(self, icon_images, pkg, icon_path):
         try:
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(icon_path, 32, 32, True)
-            icon_images[pkg].set_from_pixbuf(pixbuf)
+            icon_images[pkg].set_from_file(icon_path)
+            icon_images[pkg].set_pixel_size(32)
         except Exception:
             pass
         return False
 
     def show_usb_help(self, btn):
-        dialog = Gtk.MessageDialog(
+        dialog = Adw.MessageDialog(
             transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
-            text="How to enable 'Install via USB'"
+            heading="How to enable 'Install via USB'",
+            body=(
+                "If you don't see 'Install via USB' in Developer Options:\n\n"
+                "1. XIAOMI / MIUI: Log in to your Mi Account and insert a SIM card.\n"
+                "2. REALME / OPPO: Enable 'ADB Installation'.\n"
+                "3. OTHERS: Search for 'Allow app installation via ADB'.\n\n"
+                "DroidTux needs this for high-quality icons."
+            )
         )
-        msg = (
-            "If you don't see 'Install via USB' in Developer Options:\n\n"
-            "1. XIAOMI / MIUI: Log in to your Mi Account and insert a SIM card.\n"
-            "2. REALME / OPPO: Enable 'ADB Installation'.\n"
-            "3. OTHERS: Search for 'Allow app installation via ADB'.\n\n"
-            "DroidTux needs this for high-quality icons."
-        )
-        dialog.format_secondary_text(msg)
-        dialog.run()
-        dialog.destroy()
+        dialog.add_response("ok", "OK")
+        dialog.set_default_response("ok")
+        dialog.connect("response", lambda d, r: d.destroy())
+        dialog.present()
 
     def run_adb(self, cmd, serial=None):
         prefix = f"adb -s {serial} " if serial else "adb "
@@ -457,17 +655,14 @@ class DroidTuxApp(Gtk.Window):
             self.update_progress(f"Processing {pkg}", perc)
             self.log(f"Integrating: {pkg}")
             
-            # Clean previous files on phone (using both old and new paths for safety)
             self.run_adb(f"shell \"rm /sdcard/Download/{pkg}.png /sdcard/Download/{pkg}.label 2>/dev/null\"", serial)
             self.run_adb(f"shell \"rm {BRIDGE_REMOTE_DIR}/{pkg}.png {BRIDGE_REMOTE_DIR}/{pkg}.label 2>/dev/null\"", serial)
             
-            # Launch bridge
             self.run_adb(f"shell am start-foreground-service -n com.droidtux.bridge/.IconService --es package {pkg}", serial)
             
             icon_path = ICONS_DIR / f"{pkg}.png"
-            name = pkg.split('.')[-1].capitalize() # Initial fallback
+            name = pkg.split('.')[-1].capitalize()
             
-            # Wait for files (PNG and Label)
             success = False
             for _ in range(20):
                 size_raw = self.run_adb(f"shell stat -c %s {BRIDGE_REMOTE_DIR}/{pkg}.png 2>/dev/null", serial)
@@ -492,7 +687,6 @@ class DroidTuxApp(Gtk.Window):
             else:
                 icon_path_str = str(icon_path.absolute())
 
-            # Build scrcpy command with MULTI-DISPLAY
             scrcpy_args = (
                 f"-s {serial} --start-app={pkg} --window-title=\"{name}\" "
                 f"--new-display={resolution}/{dpi} -b {bitrate} "
@@ -510,7 +704,6 @@ class DroidTuxApp(Gtk.Window):
         if self.automatic:
             time.sleep(2)
             GLib.idle_add(self.splash.hide)
-            # Start watchdog to clean up on disconnect
             threading.Thread(target=self.watchdog, daemon=True).start()
         else:
             if hasattr(self, 'sync_btn'):
@@ -521,8 +714,7 @@ def cleanup():
     prefixes = ["dtapp-*.desktop", "droidtux-*.desktop"]
     for pattern in prefixes:
         for f in DESKTOP_DIR.glob(pattern):
-            try:
-                f.unlink()
+            try: f.unlink()
             except: pass
 
     desktop_folders = [Path.home() / "Desktop", Path.home() / "Escritorio"]
@@ -543,14 +735,13 @@ def cleanup():
     print("Cleanup complete.")
 
 class DroidTuxSplash(Gtk.Window):
-    def __init__(self):
-        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+    def __init__(self, app):
+        super().__init__(application=app)
         self.set_keep_above(True)
         self.set_decorated(False)
         self.set_resizable(False)
-        self.set_position(Gtk.WindowPosition.CENTER)
         self.set_default_size(250, 200)
-        self.get_style_context().add_class("splash-window")
+        self.add_css_class("splash-window")
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
         vbox.set_valign(Gtk.Align.CENTER)
@@ -559,29 +750,24 @@ class DroidTuxSplash(Gtk.Window):
         vbox.set_margin_end(20)
         vbox.set_margin_top(20)
         vbox.set_margin_bottom(20)
-        self.add(vbox)
+        self.set_child(vbox)
 
-        # Row 1: Logo
-        if LOGO_PATH.exists():
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(LOGO_PATH), 64, 64, True)
-            img = Gtk.Image.new_from_pixbuf(pixbuf)
-            vbox.pack_start(img, False, False, 0)
+        if LOGO_PATH and LOGO_PATH.exists():
+            img = Gtk.Image.new_from_file(str(LOGO_PATH))
+            img.set_pixel_size(64)
+            vbox.append(img)
 
-        # Row 2: Spinner
         self.spinner = Gtk.Spinner()
         self.spinner.set_size_request(32, 32)
         self.spinner.start()
-        vbox.pack_start(self.spinner, False, False, 0)
+        vbox.append(self.spinner)
 
-        # Row 3: Status Label (Logs)
         self.status_label = Gtk.Label(label="Initializing...")
-        self.status_label.get_style_context().add_class("splash-label")
+        self.status_label.add_css_class("splash-label")
         self.status_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.status_label.set_max_width_chars(25)
         self.status_label.set_halign(Gtk.Align.CENTER)
-        vbox.pack_start(self.status_label, False, False, 0)
-        
-        self.show_all()
+        vbox.append(self.status_label)
 
     def update_status(self, text):
         self.status_label.set_text(text)
@@ -593,25 +779,33 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DroidTux Integrator")
     parser.add_argument("--add", action="store_true", help="Sync automatically")
     parser.add_argument("--remove", action="store_true", help="Remove apps")
+    parser.add_argument("--settings", action="store_true", help="Open settings panel directly")
     args = parser.parse_args()
 
     if args.remove:
         cleanup()
         sys.exit(0)
-    
-    if args.add:
-        settings = load_settings()
-        if not settings.get("auto_sync", False):
-            print("Automatic sync is disabled in DroidTux settings.")
-            sys.exit(0)
 
-        print("Starting automatic sync (Splash Mode)...")
-        app = DroidTuxApp()
-        app.automatic = True
-        app.hide() # Main window hidden
-        app.splash = DroidTuxSplash()
-        threading.Thread(target=app.run_sync, daemon=True).start()
-        Gtk.main()
-    else:
-        app = DroidTuxApp()
-        Gtk.main()
+    app = Adw.Application(application_id="com.droidtux.dashboard", flags=Gio.ApplicationFlags.FLAGS_NONE)
+
+    def on_activate(application):
+        main_win = DroidTuxApp(application)
+        if args.add:
+            settings = load_settings()
+            if not settings.get("auto_sync", False):
+                print("Automatic sync is disabled in DroidTux settings.")
+                application.quit()
+                return
+
+            print("Starting automatic sync (Splash Mode)...")
+            main_win.automatic = True
+            main_win.splash = DroidTuxSplash(application)
+            main_win.splash.present()
+            threading.Thread(target=main_win.run_sync, daemon=True).start()
+        else:
+            if args.settings:
+                main_win.stack.set_visible_child_name("settings")
+            main_win.present()
+
+    app.connect("activate", on_activate)
+    app.run([sys.argv[0]])

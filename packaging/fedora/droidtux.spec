@@ -8,7 +8,7 @@ License:        MIT
 URL:            https://github.com/nexu-io
 Source0:        %{name}-%{version}.tar.gz
 
-Requires:       scrcpy android-tools python3-gobject desktop-file-utils sudo
+Requires:       scrcpy android-tools python3-gobject desktop-file-utils sudo gtk4
 BuildArch:      noarch
 
 %description

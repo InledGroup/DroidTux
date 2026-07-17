@@ -168,15 +168,15 @@ echo "[*] Building packages..."
 
 # Dependencies mapping
 DEB_DEPS=(
-    "scrcpy" "adb" "python3-gi" "desktop-file-utils" "sudo"
+    "scrcpy" "adb" "python3-gi" "desktop-file-utils" "sudo" "libgtk-4-1"
 )
 
 RPM_DEPS=(
-    "scrcpy" "android-tools" "python3-gobject" "desktop-file-utils" "sudo"
+    "scrcpy" "android-tools" "python3-gobject" "desktop-file-utils" "sudo" "gtk4"
 )
 
 PACMAN_DEPS=(
-    "scrcpy" "android-tools" "python-gobject" "desktop-file-utils" "sudo"
+    "scrcpy" "android-tools" "python-gobject" "desktop-file-utils" "sudo" "gtk4"
 )
 
 build_package() {
