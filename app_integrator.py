@@ -181,6 +181,26 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.refresh_btn.connect("clicked", self.on_refresh_clicked)
         dev_box.append(self.refresh_btn)
 
+        # Manual Wireless Connection Box
+        manual_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        manual_box.set_margin_start(20)
+        manual_box.set_margin_end(20)
+        manual_box.set_margin_top(5)
+        manual_box.set_margin_bottom(10)
+        vbox.append(manual_box)
+
+        manual_label = Gtk.Label(label="Manual IP:")
+        manual_box.append(manual_label)
+
+        self.manual_entry = Gtk.Entry()
+        self.manual_entry.set_placeholder_text("e.g. 192.168.1.50:5555")
+        self.manual_entry.set_hexpand(True)
+        manual_box.append(self.manual_entry)
+
+        self.connect_btn = Gtk.Button(label="Connect Wireless")
+        self.connect_btn.connect("clicked", self.on_manual_connect_clicked)
+        manual_box.append(self.connect_btn)
+
         # Main Card
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
         card.add_css_class("card")
@@ -481,6 +501,26 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.sync_btn.set_sensitive(False)
         self.select_btn.set_sensitive(False)
         self.camera_btn.set_sensitive(False)
+
+    def on_manual_connect_clicked(self, btn):
+        ip_port = self.manual_entry.get_text().strip()
+        if not ip_port:
+            self._show_error_dialog("Please enter an IP:Port (e.g. 192.168.1.50:5555)")
+            return
+        
+        btn.set_sensitive(False)
+        self.log(f"Attempting manual connection to {ip_port}...")
+        
+        def run_connect():
+            # Run adb connect
+            res = self.run_adb(f"connect {ip_port}")
+            self.log(f"ADB: {res}")
+            
+            # Refresh devices list
+            GLib.idle_add(lambda: self.on_refresh_clicked(self.refresh_btn))
+            GLib.idle_add(btn.set_sensitive, True)
+            
+        threading.Thread(target=run_connect, daemon=True).start()
 
     def on_sync_clicked(self, btn):
         self.sync_btn.set_sensitive(False)
