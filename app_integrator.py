@@ -70,7 +70,8 @@ DEFAULT_SETTINGS = {
     "bitrate": "16M",
     "auto_sync": False,
     "audio_redirect": True,
-    "v4l2_sink": ""
+    "v4l2_sink": "",
+    "force_x11": True
 }
 
 def load_settings():
@@ -312,6 +313,11 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.v4l2_entry.set_text(self.settings.get("v4l2_sink", ""))
         grid.attach(self.v4l2_entry, 1, 5, 1, 1)
 
+        # Force X11 for OBS
+        self.x11_check = Gtk.CheckButton(label="Force X11 Mode (highly recommended for OBS capture on Wayland)")
+        self.x11_check.set_active(bool(self.settings.get("force_x11", True)))
+        grid.attach(self.x11_check, 1, 6, 1, 1)
+
         # Save Button
         save_btn = Gtk.Button(label="SAVE CHANGES")
         save_btn.connect("clicked", self.on_save_clicked)
@@ -332,6 +338,7 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.settings["auto_sync"] = self.auto_sync_check.get_active()
         self.settings["audio_redirect"] = self.audio_check.get_active()
         self.settings["v4l2_sink"] = self.v4l2_entry.get_text().strip()
+        self.settings["force_x11"] = self.x11_check.get_active()
         save_settings(self.settings)
         
         dialog = Adw.MessageDialog(transient_for=self, heading="Settings Saved",
@@ -513,21 +520,29 @@ class DroidTuxApp(Adw.ApplicationWindow):
         
         self.settings = load_settings()
         v4l2 = self.settings.get("v4l2_sink", "").strip()
+        force_x11 = self.settings.get("force_x11", True)
         
         GLib.idle_add(self._set_button_spinner, btn, True, "Starting Camera...")
+        
+        # Safe fallback: stop spinner after 3 seconds anyway
+        GLib.timeout_add_seconds(3, lambda: self._set_button_spinner(btn, False, "PHONE CAMERA") and False)
         
         def run_camera():
             self.log(f"Starting phone camera feed on {self.serial}...")
             
-            # Using SDL_VIDEODRIVER=x11 allows OBS under Wayland to capture this window via standard X11 Window Capture
             env_vars = os.environ.copy()
-            env_vars["SDL_VIDEODRIVER"] = "x11"
+            if force_x11:
+                env_vars["SDL_VIDEODRIVER"] = "x11"
             
             cmd = f"scrcpy -s {self.serial} --video-source=camera"
-            if v4l2:
+            
+            # Check if V4L2 device exists before trying to use it
+            if v4l2 and os.path.exists(v4l2):
                 self.log(f"Redirecting video output to V4L2 sink {v4l2}...")
                 cmd += f" --v4l2-sink={v4l2}"
             else:
+                if v4l2:
+                    self.log(f"Warning: V4L2 device {v4l2} not found. Falling back to window display.")
                 cmd += " --always-on-top"
                 
             try:
@@ -535,7 +550,8 @@ class DroidTuxApp(Adw.ApplicationWindow):
                     cmd, shell=True, env=env_vars,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    text=True
+                    text=True,
+                    bufsize=1
                 )
                 
                 spinner_active = True
