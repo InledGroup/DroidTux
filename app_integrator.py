@@ -5,6 +5,8 @@ import tempfile
 import threading
 import json
 import time
+import webbrowser
+import socket
 from pathlib import Path
 import gi
 import sys
@@ -66,7 +68,8 @@ DEFAULT_SETTINGS = {
     "resolution": "1280x720",
     "dpi": 240,
     "bitrate": "16M",
-    "auto_sync": False
+    "auto_sync": False,
+    "audio_redirect": True
 }
 
 def load_settings():
@@ -85,7 +88,7 @@ def save_settings(settings):
 class DroidTuxApp(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="DroidTux Dashboard")
-        self.set_default_size(500, 700)
+        self.set_default_size(500, 750)
         
         self.settings = load_settings()
         self.serial = None
@@ -155,49 +158,84 @@ class DroidTuxApp(Adw.ApplicationWindow):
         header.append(subtitle)
         vbox.append(header)
 
+        # Device Selector Box
+        dev_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        dev_box.set_margin_start(20)
+        dev_box.set_margin_end(20)
+        dev_box.set_margin_top(15)
+        dev_box.set_margin_bottom(5)
+        vbox.append(dev_box)
+
+        dev_label = Gtk.Label(label="Device:")
+        dev_box.append(dev_label)
+
+        self.device_combo = Gtk.ComboBoxText()
+        self.device_combo.set_hexpand(True)
+        self.device_combo.connect("changed", self.on_device_changed)
+        dev_box.append(self.device_combo)
+
+        self.refresh_btn = Gtk.Button(label="Scan & Refresh")
+        self.refresh_btn.connect("clicked", self.on_refresh_clicked)
+        dev_box.append(self.refresh_btn)
+
         # Main Card
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
         card.add_css_class("card")
         card.set_vexpand(True)
         vbox.append(card)
 
+        # Single line status label
         self.status_label = Gtk.Label(label="Ready to sync")
         self.status_label.set_halign(Gtk.Align.CENTER)
         card.append(self.status_label)
 
+        # Progress bar (hidden by default)
         self.progress_bar = Gtk.ProgressBar()
+        self.progress_bar.set_visible(False)
         card.append(self.progress_bar)
 
-        # Log Area
+        # Collapsible Log Expander
+        self.log_expander = Gtk.Expander(label="Show Sync Logs")
+        self.log_expander.set_expanded(False)
+        card.append(self.log_expander)
+
         scrolled = Gtk.ScrolledWindow()
-        scrolled.set_vexpand(True)
+        scrolled.set_size_request(-1, 150)
         scrolled.add_css_class("log-view")
         self.text_view = Gtk.TextView()
         self.text_view.set_editable(False)
         self.text_view.set_cursor_visible(False)
         self.text_view.set_wrap_mode(Gtk.WrapMode.WORD)
         scrolled.set_child(self.text_view)
-        card.append(scrolled)
+        
+        self.log_expander.set_child(scrolled)
 
-        # Action Buttons
+        # Action Buttons (Sync, Custom, Camera, Help)
         bbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         bbox.set_homogeneous(True)
         bbox.set_margin_top(10)
         bbox.set_margin_bottom(10)
         card.append(bbox)
 
-        self.sync_btn = Gtk.Button(label="START SYNC (all apps)")
+        self.sync_btn = Gtk.Button(label="START SYNC")
         self.sync_btn.add_css_class("suggested-action")
         self.sync_btn.connect("clicked", self.on_sync_clicked)
         bbox.append(self.sync_btn)
 
-        self.select_btn = Gtk.Button(label="CUSTOM APP SELECT")
+        self.select_btn = Gtk.Button(label="CUSTOM SELECT")
         self.select_btn.connect("clicked", self.on_custom_select_clicked)
         bbox.append(self.select_btn)
 
-        help_btn = Gtk.Button(label="USB HELP")
-        help_btn.connect("clicked", self.show_usb_help)
+        self.camera_btn = Gtk.Button(label="PHONE CAMERA")
+        self.camera_btn.connect("clicked", self.on_camera_clicked)
+        bbox.append(self.camera_btn)
+
+        help_btn = Gtk.Button(label="HELP")
+        help_btn.connect("clicked", lambda b: webbrowser.open("https://help.inled.es"))
         bbox.append(help_btn)
+
+        # Start initial device scan
+        GLib.idle_add(lambda: self.on_refresh_clicked(self.refresh_btn))
 
     def setup_settings_page(self, vbox):
         vbox.set_spacing(10)
@@ -259,35 +297,28 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.auto_sync_check.set_active(bool(self.settings.get("auto_sync", False)))
         grid.attach(self.auto_sync_check, 1, 3, 1, 1)
 
+        # Audio redirection
+        self.audio_check = Gtk.CheckButton(label="Redirect Audio to PC (scrcpy 2.0+)")
+        self.audio_check.set_active(bool(self.settings.get("audio_redirect", True)))
+        grid.attach(self.audio_check, 1, 4, 1, 1)
+
         # Save Button
         save_btn = Gtk.Button(label="SAVE CHANGES")
         save_btn.connect("clicked", self.on_save_clicked)
         save_btn.add_css_class("suggested-action")
         vbox.append(save_btn)
 
-        # Help Buttons
-        help_label = Gtk.Label()
-        help_label.set_markup("<span weight='bold'>Help &amp; Configuration</span>")
-        vbox.append(help_label)
-
-        h_bbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        vbox.append(h_bbox)
-
-        btns = [
-            ("ADB Debugging", self.show_adb_help),
-            ("SecondScreen", self.show_ss_help),
-            ("USB Installation", self.show_usb_help)
-        ]
-        for label, cmd in btns:
-            b = Gtk.Button(label=label)
-            b.connect("clicked", cmd)
-            h_bbox.append(b)
+        # Help Button
+        help_btn = Gtk.Button(label="HELP & SUPPORT")
+        help_btn.connect("clicked", lambda b: webbrowser.open("https://help.inled.es"))
+        vbox.append(help_btn)
 
     def on_save_clicked(self, btn):
         self.settings["resolution"] = self.res_combo.get_active_text()
         self.settings["dpi"] = int(self.dpi_adj.get_value())
         self.settings["bitrate"] = self.bit_combo.get_active_text()
         self.settings["auto_sync"] = self.auto_sync_check.get_active()
+        self.settings["audio_redirect"] = self.audio_check.get_active()
         save_settings(self.settings)
         
         dialog = Adw.MessageDialog(transient_for=self, heading="Settings Saved",
@@ -296,30 +327,6 @@ class DroidTuxApp(Adw.ApplicationWindow):
         dialog.set_default_response("ok")
         dialog.connect("response", lambda d, r: d.destroy())
         dialog.present()
-
-    def show_help(self, title, content):
-        dialog = Adw.MessageDialog(transient_for=self, heading=title, body=content)
-        dialog.add_response("ok", "OK")
-        dialog.set_default_response("ok")
-        dialog.connect("response", lambda d, r: d.destroy())
-        dialog.present()
-
-    def show_adb_help(self, btn):
-        self.show_help("ADB Debugging", 
-            "1. Go to 'Settings' on your phone.\n"
-            "2. 'About phone' -> Tap 'Build number' 7 times.\n"
-            "3. Go back -> 'System' -> 'Developer options'.\n"
-            "4. Enable 'USB Debugging'.")
-
-    def show_ss_help(self, btn):
-        self.show_help("SecondScreen", 
-            "1. Install SecondScreen from Play Store.\n"
-            "2. Create a new profile named exactly 'Linux'.\n"
-            "3. Set resolution to 1920x1080 and density to 240.")
-
-    def show_usb_help(self, btn):
-        self.show_help("USB Installation", 
-            "On Xiaomi/MIUI phones:\n\n1. Developer options -> Enable 'Install via USB'.\n2. May require Mi Account login.")
 
     def log(self, message):
         print(f"[DroidTux] {message}")
@@ -347,8 +354,111 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.progress_bar.set_fraction(fraction)
         return False
 
+    def on_refresh_clicked(self, btn):
+        btn.set_sensitive(False)
+        self.device_combo.set_sensitive(False)
+        self.device_combo.remove_all()
+        self.device_combo.append("scanning", "Scanning network...")
+        self.device_combo.set_active(0)
+        
+        def run_refresh():
+            discovered_ips = []
+            try:
+                # Get local IP
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+                
+                parts = local_ip.split('.')
+                if len(parts) == 4:
+                    base_ip = f"{parts[0]}.{parts[1]}.{parts[2]}."
+                    
+                    def check_ip(ip):
+                        try:
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            sock.settimeout(0.15)
+                            if sock.connect_ex((ip, 5555)) == 0:
+                                discovered_ips.append(ip)
+                            sock.close()
+                        except:
+                            pass
+                    
+                    threads = []
+                    for i in range(1, 255):
+                        t = threading.Thread(target=check_ip, args=(base_ip + str(i),))
+                        threads.append(t)
+                        t.start()
+                    for t in threads:
+                        t.join()
+            except Exception as e:
+                print(f"[Scan Error] {e}")
+
+            # Connect discovered TCP devices
+            for ip in discovered_ips:
+                self.run_adb(f"connect {ip}:5555")
+
+            # Query connected devices
+            output = self.run_adb("devices")
+            lines = [l for l in (output or "").splitlines()[1:] if l.strip()]
+            devices = [l.split()[0] for l in lines if "\tdevice" in l]
+
+            # Fetch human readable names for each device
+            devices_info = []
+            for d in devices:
+                brand = self.run_adb("shell getprop ro.product.brand", d).strip()
+                model = self.run_adb("shell getprop ro.product.model", d).strip()
+                if "ERROR" in brand or not brand: brand = ""
+                if "ERROR" in model or not model: model = ""
+                name = f"{brand} {model}".strip()
+                if not name: name = "Android Device"
+                
+                conn_type = "Wireless" if ":" in d else "USB"
+                display_name = f"{name} ({conn_type}: {d})"
+                devices_info.append((d, display_name))
+
+            GLib.idle_add(self._update_devices_combo, devices_info, btn)
+
+        threading.Thread(target=run_refresh, daemon=True).start()
+
+    def _update_devices_combo(self, devices_info, btn):
+        self.device_combo.remove_all()
+        if not devices_info:
+            self.device_combo.append("none", "No devices found")
+            self.device_combo.set_active(0)
+            self.sync_btn.set_sensitive(False)
+            self.select_btn.set_sensitive(False)
+            self.camera_btn.set_sensitive(False)
+            self.serial = None
+        else:
+            for serial, display_name in devices_info:
+                self.device_combo.append(serial, display_name)
+            self.device_combo.set_active(0)
+            self.sync_btn.set_sensitive(True)
+            self.select_btn.set_sensitive(True)
+            self.camera_btn.set_sensitive(True)
+            self.serial = devices_info[0][0]
+            
+        btn.set_sensitive(True)
+        self.device_combo.set_sensitive(True)
+        return False
+
+    def on_device_changed(self, combo):
+        active_id = combo.get_active_id()
+        if active_id and active_id not in ["scanning", "none"]:
+            self.serial = active_id
+            self.sync_btn.set_sensitive(True)
+            self.select_btn.set_sensitive(True)
+            self.camera_btn.set_sensitive(True)
+        else:
+            self.serial = None
+            self.sync_btn.set_sensitive(False)
+            self.select_btn.set_sensitive(False)
+            self.camera_btn.set_sensitive(False)
+
     def on_sync_clicked(self, btn):
         self.sync_btn.set_sensitive(False)
+        self.progress_bar.set_visible(True)
         self.text_view.get_buffer().set_text("")
         threading.Thread(target=self.run_sync, daemon=True).start()
 
@@ -356,42 +466,34 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.select_btn.set_sensitive(False)
         threading.Thread(target=self._prepare_app_selector, daemon=True).start()
 
-    def _prepare_app_selector(self):
-        GLib.idle_add(self._update_progress_idle, "Searching for device...", 0.1)
-        serial = None
-        for _ in range(15):
-            output = self.run_adb("devices")
-            lines = [l for l in (output or "").splitlines()[1:] if l.strip()]
-            devs = [l.split()[0] for l in lines if "\tdevice" in l]
-            if devs:
-                serial = devs[0]
-                break
-            time.sleep(1)
+    def on_camera_clicked(self, btn):
+        if not self.serial:
+            self._show_error_dialog("No device selected.")
+            return
+        
+        def run_camera():
+            self.log(f"Starting phone camera feed on {self.serial}...")
+            # Run scrcpy with camera video source
+            subprocess.run(
+                f"scrcpy -s {self.serial} --video-source=camera --always-on-top",
+                shell=True
+            )
+            
+        threading.Thread(target=run_camera, daemon=True).start()
 
-        if not serial:
-            GLib.idle_add(self._show_error_dialog, "No device found. Connect your phone via USB and enable USB debugging.")
+    def _prepare_app_selector(self):
+        if not self.serial:
+            GLib.idle_add(self._show_error_dialog, "No device selected. Click Scan & Refresh.")
             GLib.idle_add(self.select_btn.set_sensitive, True)
             return
 
-        self.serial = serial
+        serial = self.serial
         cmd = "shell \"cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER\""
         pkgs_raw = self.run_adb(cmd, serial)
         packages = sorted(set([l.split("/")[0].strip() for l in pkgs_raw.splitlines() if "/" in l]))
 
         GLib.idle_add(self.select_btn.set_sensitive, True)
         GLib.idle_add(self._show_app_selector_dialog, packages, serial)
-
-    def _show_error_dialog(self, text):
-        dialog = Adw.MessageDialog(
-            transient_for=self,
-            heading="Error",
-            body=text
-        )
-        dialog.add_response("ok", "OK")
-        dialog.set_default_response("ok")
-        dialog.connect("response", lambda d, r: d.destroy())
-        dialog.present()
-        return False
 
     def _show_app_selector_dialog(self, packages, serial):
         dialog = Adw.Window(
@@ -532,6 +634,7 @@ class DroidTuxApp(Adw.ApplicationWindow):
             if selected:
                 self.sync_btn.set_sensitive(False)
                 self.select_btn.set_sensitive(False)
+                self.progress_bar.set_visible(True)
                 self.text_view.get_buffer().set_text("")
                 threading.Thread(target=self.run_sync, args=(selected,), daemon=True).start()
 
@@ -546,22 +649,17 @@ class DroidTuxApp(Adw.ApplicationWindow):
             pass
         return False
 
-    def show_usb_help(self, btn):
+    def _show_error_dialog(self, text):
         dialog = Adw.MessageDialog(
             transient_for=self,
-            heading="How to enable 'Install via USB'",
-            body=(
-                "If you don't see 'Install via USB' in Developer Options:\n\n"
-                "1. XIAOMI / MIUI: Log in to your Mi Account and insert a SIM card.\n"
-                "2. REALME / OPPO: Enable 'ADB Installation'.\n"
-                "3. OTHERS: Search for 'Allow app installation via ADB'.\n\n"
-                "DroidTux needs this for high-quality icons."
-            )
+            heading="Error",
+            body=text
         )
         dialog.add_response("ok", "OK")
         dialog.set_default_response("ok")
         dialog.connect("response", lambda d, r: d.destroy())
         dialog.present()
+        return False
 
     def run_adb(self, cmd, serial=None):
         prefix = f"adb -s {serial} " if serial else "adb "
@@ -588,19 +686,15 @@ class DroidTuxApp(Adw.ApplicationWindow):
                 os._exit(0)
 
     def run_sync(self, selected_packages=None):
-        self.update_progress("Searching for device...", 0.1)
-        serial = None
-        while not serial:
-            output = self.run_adb("devices")
-            lines = [l for l in (output or "").splitlines()[1:] if l.strip()]
-            devs = [l.split()[0] for l in lines if "\tdevice" in l]
-            if devs: serial = devs[0]
-            else: 
-                self.log("Waiting for USB device...")
-                time.sleep(2)
-        
+        if not self.serial:
+            self.update_progress("Error: No device selected", 0)
+            if not self.automatic:
+                GLib.idle_add(self.sync_btn.set_sensitive, True)
+                GLib.idle_add(self.select_btn.set_sensitive, True)
+            return
+
+        serial = self.serial
         self.log(f"Connected to {serial}")
-        self.serial = serial
         
         # Prevent phone sleep
         self.log("Setting 'Stay Awake' mode...")
@@ -615,7 +709,6 @@ class DroidTuxApp(Adw.ApplicationWindow):
             res = self.run_adb(f"install -r -g {BRIDGE_APK}", serial)
             if "INSTALL_FAILED_USER_RESTRICTED" in res:
                 self.log("ERROR: USB Installation blocked by phone.")
-                GLib.idle_add(self.show_usb_help, None)
                 self.update_progress("Error: Enable USB Installation", 0)
                 if not self.automatic:
                     GLib.idle_add(self.sync_btn.set_sensitive, True)
@@ -634,13 +727,14 @@ class DroidTuxApp(Adw.ApplicationWindow):
         ICONS_DIR.mkdir(parents=True, exist_ok=True)
         DESKTOP_DIR.mkdir(parents=True, exist_ok=True)
         
-        # Load current settings
+        # Load settings
         self.settings = load_settings()
         resolution = self.settings.get("resolution", "1280x720")
         res_w = resolution.split('x')[0]
         res_h = resolution.split('x')[1]
         dpi = self.settings.get("dpi", 240)
         bitrate = self.settings.get("bitrate", "16M").lower()
+        audio = self.settings.get("audio_redirect", True)
 
         cmd = "shell \"cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER\""
         pkgs_raw = self.run_adb(cmd, serial)
@@ -687,10 +781,11 @@ class DroidTuxApp(Adw.ApplicationWindow):
             else:
                 icon_path_str = str(icon_path.absolute())
 
+            audio_flag = "" if audio else " --no-audio"
             scrcpy_args = (
                 f"-s {serial} --start-app={pkg} --window-title=\"{name}\" "
                 f"--new-display={resolution}/{dpi} -b {bitrate} "
-                f"--always-on-top --stay-awake"
+                f"--always-on-top --stay-awake{audio_flag}"
             )
             exec_cmd = f"scrcpy {scrcpy_args}"
             
