@@ -1,6 +1,0 @@
-# 99-android-integrator.rules
-# Regla Udev para disparar el integrador cuando un dispositivo Android con ADB se conecta o desconecta.
-# Se utiliza un TAG para asegurar que el evento 'remove' se identifique correctamente.
-
-ACTION=="add", SUBSYSTEM=="usb", ENV{ID_USB_INTERFACES}=="*ff4201*", TAG+="droidtux_device", RUN+="/usr/local/bin/android-integrator-trigger.sh add"
-ACTION=="remove", TAGS=="*:droidtux_device:*", RUN+="/usr/local/bin/android-integrator-trigger.sh remove"

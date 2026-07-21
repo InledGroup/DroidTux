@@ -27,8 +27,7 @@ Droidtux is an application that acts as a scrcpy GUI, making the difficult simpl
 
 ### Prerequisites
 - **Linux:** Python 3, `scrcpy`, `adb`, and GTK4 libraries.
-- **Android:** Depuración por USB activada o wireless. Soporte para instalación de aplicaciones vía ADB (para instalar un simple apk compuesto por un único archivo Java que puedes auditar en el repo, que simplemente extrae los iconos de las apps)
-
+- **Android:** USB debugging enabled or wireless. Support for installing applications via ADB (to install a simple apk composed of a single Java file that you can audit in the repo, which simply extracts the app icons)
 ### Installation
 1. Clone this repository.
 2. Ensure the bridge APK is generated (or use the included one):
