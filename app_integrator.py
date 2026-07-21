@@ -71,7 +71,12 @@ DEFAULT_SETTINGS = {
     "auto_sync": False,
     "audio_redirect": True,
     "v4l2_sink": "",
-    "force_x11": True
+    "force_x11": True,
+    "camera_id": "0",
+    "camera_size": "1920x1080",
+    "camera_audio": True,
+    "camera_show_window": False,
+    "camera_high_speed": False
 }
 
 def load_settings():
@@ -135,8 +140,11 @@ class DroidTuxApp(Adw.ApplicationWindow):
         # PAGE 2: Settings
         settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.setup_settings_page(settings_box)
+        settings_scroll = Gtk.ScrolledWindow()
+        settings_scroll.set_child(settings_box)
+        settings_scroll.set_vexpand(True)
         self.stack.add_titled_with_icon(
-            settings_box,
+            settings_scroll,
             "settings",
             "Settings",
             "preferences-system-symbolic"
@@ -338,13 +346,148 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.x11_check.set_active(bool(self.settings.get("force_x11", True)))
         grid.attach(self.x11_check, 1, 6, 1, 1)
 
+        # === Camera Settings Section ===
+        vbox.append(Gtk.Separator())
+        
+        cam_title = Gtk.Label()
+        cam_title.set_markup("<span weight='bold'>Phone Camera Settings</span>")
+        cam_title.set_halign(Gtk.Align.START)
+        vbox.append(cam_title)
+
+        cam_grid = Gtk.Grid(column_spacing=15, row_spacing=15)
+        cam_grid.set_halign(Gtk.Align.CENTER)
+        vbox.append(cam_grid)
+
+        # Camera ID
+        cam_id_label = Gtk.Label(label="Camera ID:")
+        cam_id_label.set_xalign(1.0)
+        cam_grid.attach(cam_id_label, 0, 0, 1, 1)
+        
+        cam_id_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.cam_id_dropdown = Gtk.DropDown()
+        self.cam_id_dropdown.set_model(Gtk.StringList.new(["Click Detect to scan"]))
+        self.cam_id_dropdown.set_selected(0)
+        cam_id_box.append(self.cam_id_dropdown)
+        
+        self.detect_cam_btn = Gtk.Button(label="Detect")
+        self.detect_cam_btn.connect("clicked", self.on_detect_cameras_clicked)
+        cam_id_box.append(self.detect_cam_btn)
+        
+        cam_grid.attach(cam_id_box, 1, 0, 1, 1)
+        self._cam_id_options = []
+
+        # Camera Size
+        cam_size_label = Gtk.Label(label="Camera Resolution:")
+        cam_size_label.set_xalign(1.0)
+        cam_grid.attach(cam_size_label, 0, 1, 1, 1)
+        
+        cam_size_opts = ["1920x1080", "1280x720", "640x480", "320x240"]
+        self.cam_size_dropdown = Gtk.DropDown.new_from_strings(cam_size_opts)
+        cam_size_val = self.settings.get("camera_size", "1920x1080")
+        try:
+            cam_size_idx = cam_size_opts.index(cam_size_val)
+        except ValueError:
+            cam_size_idx = 0
+        self.cam_size_dropdown.set_selected(cam_size_idx)
+        cam_grid.attach(self.cam_size_dropdown, 1, 1, 1, 1)
+
+        # Camera Audio
+        self.cam_audio_check = Gtk.CheckButton(label="Capture microphone audio with camera")
+        self.cam_audio_check.set_active(bool(self.settings.get("camera_audio", True)))
+        cam_grid.attach(self.cam_audio_check, 1, 2, 1, 1)
+
+        # Show Window
+        self.cam_window_check = Gtk.CheckButton(label="Show scrcpy preview window")
+        self.cam_window_check.set_active(bool(self.settings.get("camera_show_window", False)))
+        cam_grid.attach(self.cam_window_check, 1, 3, 1, 1)
+
+        # High Speed
+        self.cam_highspeed_check = Gtk.CheckButton(label="Enable high-speed camera mode (slow motion)")
+        self.cam_highspeed_check.set_active(bool(self.settings.get("camera_high_speed", False)))
+        cam_grid.attach(self.cam_highspeed_check, 1, 4, 1, 1)
+
+        # V4L2 Setup Button
+        v4l2_setup_btn = Gtk.Button(label="Setup V4L2 Loopback (run as root)")
+        v4l2_setup_btn.connect("clicked", self.on_v4l2_setup_clicked)
+        cam_grid.attach(v4l2_setup_btn, 1, 5, 1, 1)
+
         # Save Button
         save_btn = Gtk.Button(label="SAVE CHANGES")
         save_btn.connect("clicked", self.on_save_clicked)
         save_btn.add_css_class("suggested-action")
         vbox.append(save_btn)
 
+        # Wireless Assistant Section
+        vbox.append(Gtk.Separator())
+        
+        wireless_label = Gtk.Label()
+        wireless_label.set_markup("<span weight='bold'>Wireless Network Assistant</span>")
+        wireless_label.set_halign(Gtk.Align.START)
+        vbox.append(wireless_label)
+
+        self.tcpip_btn = Gtk.Button(label="Configure Phone for Wi-Fi Mode (Requires USB)")
+        self.tcpip_btn.connect("clicked", self.on_tcpip_clicked)
+        vbox.append(self.tcpip_btn)
+
+        # Repository Info
+        vbox.append(Gtk.Separator())
+        
+        repo_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        repo_info.set_margin_top(5)
+        repo_info.set_margin_bottom(5)
+        repo_label = Gtk.Label()
+        repo_label.set_markup(
+            "<span size='small'>Keep DroidTux updated with the INLED repository</span>"
+        )
+        repo_label.set_justify(Gtk.Justification.CENTER)
+        repo_info.append(repo_label)
+        
+        repo_link = Gtk.Label()
+        repo_link.set_markup(
+            '<span size="small"><a href="https://apt.inled.es">'
+            'apt.inled.es</a> — Debian · Fedora · Arch</span>'
+        )
+        repo_link.set_justify(Gtk.Justification.CENTER)
+        repo_info.append(repo_link)
+        
+        vbox.append(repo_info)
+
+        # Community Section
+        vbox.append(Gtk.Separator())
+        
+        comm_title = Gtk.Label()
+        comm_title.set_markup("<span weight='bold'>Community</span>")
+        comm_title.set_halign(Gtk.Align.START)
+        vbox.append(comm_title)
+
+        comm_desc = Gtk.Label()
+        comm_desc.set_markup(
+            "<span size='small'>Help us improve DroidTux! "
+            "Contributions via PRs and issues are welcome.</span>"
+        )
+        comm_desc.set_wrap(True)
+        comm_desc.set_justify(Gtk.Justification.CENTER)
+        vbox.append(comm_desc)
+
+        comm_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        comm_box.set_halign(Gtk.Align.CENTER)
+        comm_box.set_margin_top(5)
+        vbox.append(comm_box)
+
+        github_btn = Gtk.Button(label="GitHub")
+        github_btn.connect("clicked", lambda b: webbrowser.open("https://github.com/InledGroup"))
+        comm_box.append(github_btn)
+
+        discord_btn = Gtk.Button(label="Discord")
+        discord_btn.connect("clicked", lambda b: webbrowser.open("https://discord.com/invite/PSeTkDMnr"))
+        comm_box.append(discord_btn)
+
+        matrix_btn = Gtk.Button(label="Matrix")
+        matrix_btn.connect("clicked", lambda b: webbrowser.open("https://matrix.inled.es/"))
+        comm_box.append(matrix_btn)
+
         # Help Button
+        vbox.append(Gtk.Separator())
         help_btn = Gtk.Button(label="HELP & SUPPORT")
         help_btn.connect("clicked", lambda b: webbrowser.open("https://help.inled.es"))
         vbox.append(help_btn)
@@ -359,6 +502,18 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.settings["audio_redirect"] = self.audio_check.get_active()
         self.settings["v4l2_sink"] = self.v4l2_entry.get_text().strip()
         self.settings["force_x11"] = self.x11_check.get_active()
+        
+        # Camera settings
+        cam_id_item = self.cam_id_dropdown.get_selected_item()
+        cam_id_str = cam_id_item.get_string() if cam_id_item else "0"
+        self.settings["camera_id"] = cam_id_str.split(" ")[0]
+        
+        cam_size_item = self.cam_size_dropdown.get_selected_item()
+        self.settings["camera_size"] = cam_size_item.get_string() if cam_size_item else "1920x1080"
+        self.settings["camera_audio"] = self.cam_audio_check.get_active()
+        self.settings["camera_show_window"] = self.cam_window_check.get_active()
+        self.settings["camera_high_speed"] = self.cam_highspeed_check.get_active()
+        
         save_settings(self.settings)
         
         dialog = Adw.MessageDialog(transient_for=self, heading="Settings Saved",
@@ -367,6 +522,159 @@ class DroidTuxApp(Adw.ApplicationWindow):
         dialog.set_default_response("ok")
         dialog.connect("response", lambda d, r: d.destroy())
         dialog.present()
+
+    def on_v4l2_setup_clicked(self, btn):
+        dialog = Adw.Window(
+            title="V4L2 Loopback Setup",
+            transient_for=self,
+            modal=True,
+            default_width=450,
+            default_height=400
+        )
+        
+        hb = Adw.HeaderBar()
+        toolbar_view = Adw.ToolbarView()
+        toolbar_view.add_top_bar(hb)
+        dialog.set_content(toolbar_view)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        toolbar_view.set_content(vbox)
+
+        info_label = Gtk.Label()
+        info_label.set_markup(
+            "<b>V4L2 Loopback Setup</b>\n\n"
+            "This will configure the v4l2loopback kernel module\n"
+            "to create a virtual webcam device.\n\n"
+            "<i>Requires sudo privileges.</i>"
+        )
+        info_label.set_justify(Gtk.Justification.CENTER)
+        vbox.append(info_label)
+
+        self.v4l2_log_view = Gtk.TextView()
+        self.v4l2_log_view.set_editable(False)
+        self.v4l2_log_view.set_monospace(True)
+        self.v4l2_log_view.set_size_request(-1, 150)
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_child(self.v4l2_log_view)
+        vbox.append(scrolled)
+
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        btn_box.set_halign(Gtk.Align.CENTER)
+        vbox.append(btn_box)
+
+        setup_btn = Gtk.Button(label="Setup V4L2 Loopback")
+        setup_btn.add_css_class("suggested-action")
+        btn_box.append(setup_btn)
+
+        close_btn = Gtk.Button(label="Close")
+        btn_box.append(close_btn)
+
+        def log_v4l2(msg):
+            def _log():
+                buffer = self.v4l2_log_view.get_buffer()
+                buffer.insert(buffer.get_end_iter(), f"{msg}\n")
+                adj = self.v4l2_log_view.get_vadjustment()
+                adj.set_value(adj.get_upper() - adj.get_page_size())
+            GLib.idle_add(_log)
+
+        def run_setup():
+            setup_btn.set_sensitive(False)
+            log_v4l2("Checking if v4l2loopback is loaded...")
+            
+            result = subprocess.run("lsmod | grep v4l2loopback", shell=True, capture_output=True, text=True)
+            if "v4l2loopback" in result.stdout:
+                log_v4l2("v4l2loopback is already loaded.")
+            else:
+                log_v4l2("Loading v4l2loopback module...")
+                result = subprocess.run(
+                    "sudo modprobe v4l2loopback exclusive_caps=1",
+                    shell=True, capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    log_v4l2("v4l2loopback loaded successfully.")
+                else:
+                    log_v4l2(f"Error loading module: {result.stderr}")
+                    log_v4l2("You may need to install v4l2loopback-dkms first.")
+                    log_v4l2("Run: sudo apt install v4l2loopback-dkms")
+                    GLib.idle_add(setup_btn.set_sensitive, True)
+                    return
+
+            log_v4l2("Listing video devices...")
+            result = subprocess.run("ls /dev/video*", shell=True, capture_output=True, text=True)
+            devices = result.stdout.strip().split('\n') if result.stdout.strip() else []
+            log_v4l2(f"Found devices: {', '.join(devices)}")
+
+            result = subprocess.run("v4l2-ctl --list-devices 2>/dev/null", shell=True, capture_output=True, text=True)
+            if result.stdout:
+                log_v4l2(f"\nDevice details:\n{result.stdout}")
+
+            v4l2_entry_text = self.v4l2_entry.get_text().strip()
+            if not v4l2_entry_text:
+                last_dev = devices[-1] if devices else "/dev/video4"
+                self.v4l2_entry.set_text(last_dev)
+                log_v4l2(f"\nAuto-set V4L2 sink to: {last_dev}")
+                log_v4l2("Remember to SAVE settings to apply this change.")
+            else:
+                    log_v4l2(f"\nV4L2 sink already configured: {v4l2_entry_text}")
+
+            log_v4l2("\nSetup complete! You can now use the Phone Camera button.")
+            GLib.idle_add(setup_btn.set_sensitive, True)
+
+        setup_btn.connect("clicked", lambda b: threading.Thread(target=run_setup, daemon=True).start())
+        close_btn.connect("clicked", lambda b: dialog.destroy())
+        dialog.present()
+
+    def on_detect_cameras_clicked(self, btn):
+        if not self.serial:
+            self._show_error_dialog("No device selected. Connect a device first.")
+            return
+        
+        btn.set_sensitive(False)
+        btn.set_label("Detecting...")
+        
+        def run_detect():
+            serial = self.serial
+            result = subprocess.run(
+                f"scrcpy --list-cameras -s {serial}",
+                shell=True, capture_output=True, text=True, timeout=10
+            )
+            
+            cameras = []
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("--camera-id="):
+                    # Parse: --camera-id=0    (back, 4080x3072, fps={...})
+                    parts = line.split(" ", 1)
+                    cam_id_part = parts[0].split("=")[1]
+                    desc = parts[1] if len(parts) > 1 else ""
+                    cameras.append((cam_id_part, desc.strip()))
+            
+            def update_ui():
+                if cameras:
+                    display_names = [f"{cid} {desc}" for cid, desc in cameras]
+                    self.cam_id_dropdown.set_model(Gtk.StringList.new(display_names))
+                    self._cam_id_options = cameras
+                    
+                    saved_id = self.settings.get("camera_id", "0")
+                    for idx, (cid, _) in enumerate(cameras):
+                        if cid == saved_id:
+                            self.cam_id_dropdown.set_selected(idx)
+                            break
+                else:
+                    self.cam_id_dropdown.set_model(Gtk.StringList.new(["No cameras found"]))
+                    self._cam_id_options = []
+                    self.log("No cameras detected. Is scrcpy installed and device connected?")
+                
+                btn.set_sensitive(True)
+                btn.set_label("Detect")
+            
+            GLib.idle_add(update_ui)
+        
+        threading.Thread(target=run_detect, daemon=True).start()
 
     def log(self, message):
         print(f"[DroidTux] {message}")
@@ -561,6 +869,11 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.settings = load_settings()
         v4l2 = self.settings.get("v4l2_sink", "").strip()
         force_x11 = self.settings.get("force_x11", True)
+        camera_id = self.settings.get("camera_id", "0")
+        camera_size = self.settings.get("camera_size", "1920x1080")
+        camera_audio = self.settings.get("camera_audio", True)
+        camera_show_window = self.settings.get("camera_show_window", False)
+        camera_high_speed = self.settings.get("camera_high_speed", False)
         
         GLib.idle_add(self._set_button_spinner, btn, True, "Starting Camera...")
         
@@ -569,21 +882,35 @@ class DroidTuxApp(Adw.ApplicationWindow):
         
         def run_camera():
             self.log(f"Starting phone camera feed on {self.serial}...")
+            self.log(f"Camera: ID={camera_id}, Size={camera_size}, Audio={camera_audio}")
             
             env_vars = os.environ.copy()
             if force_x11:
                 env_vars["SDL_VIDEODRIVER"] = "x11"
             
-            cmd = f"scrcpy -s {self.serial} --video-source=camera"
+            cmd = f"scrcpy -s {self.serial} --video-source=camera --camera-id={camera_id} --camera-size={camera_size}"
+            
+            if camera_high_speed:
+                cmd += " --camera-high-speed"
+            
+            if not camera_audio:
+                cmd += " --no-audio"
+            
+            if camera_show_window:
+                cmd += " --always-on-top"
             
             # Check if V4L2 device exists before trying to use it
             if v4l2 and os.path.exists(v4l2):
                 self.log(f"Redirecting video output to V4L2 sink {v4l2}...")
                 cmd += f" --v4l2-sink={v4l2}"
+                if not camera_show_window:
+                    cmd += " --no-window"
             else:
                 if v4l2:
                     self.log(f"Warning: V4L2 device {v4l2} not found. Falling back to window display.")
                 cmd += " --always-on-top"
+                
+            self.log(f"Running: {cmd}")
                 
             try:
                 proc = subprocess.Popen(
@@ -612,6 +939,180 @@ class DroidTuxApp(Adw.ApplicationWindow):
                 GLib.idle_add(self._set_button_spinner, btn, False, "PHONE CAMERA")
             
         threading.Thread(target=run_camera, daemon=True).start()
+
+    def on_tcpip_clicked(self, btn):
+        dialog = Adw.Window(
+            title="Wireless Debug Assistant",
+            transient_for=self,
+            modal=True,
+            default_width=420,
+            default_height=350
+        )
+        
+        hb = Adw.HeaderBar()
+        toolbar_view = Adw.ToolbarView()
+        toolbar_view.add_top_bar(hb)
+        dialog.set_content(toolbar_view)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        vbox.set_margin_top(20)
+        vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20)
+        vbox.set_margin_end(20)
+        vbox.set_valign(Gtk.Align.CENTER)
+        vbox.set_halign(Gtk.Align.CENTER)
+        toolbar_view.set_content(vbox)
+
+        # Spinner
+        spinner = Gtk.Spinner()
+        spinner.set_size_request(48, 48)
+        spinner.start()
+        vbox.append(spinner)
+
+        # Status Label
+        status_label = Gtk.Label()
+        status_label.set_justify(Gtk.Justification.CENTER)
+        status_label.set_wrap(True)
+        status_label.set_max_width_chars(42)
+        status_label.set_markup(
+            "<span size='large' weight='bold'>Waiting for USB device...</span>\n\n"
+            "Connect your Android phone to the PC using a USB cable.\n"
+            "Make sure 'USB Debugging' is enabled in Developer Options."
+        )
+        vbox.append(status_label)
+
+        # Action Buttons
+        close_btn = Gtk.Button(label="Cancel")
+        close_btn.set_margin_top(15)
+        vbox.append(close_btn)
+
+        stop_event = threading.Event()
+
+        def close_dialog(b):
+            stop_event.set()
+            dialog.destroy()
+        close_btn.connect("clicked", close_dialog)
+
+        def run_assistant():
+            usb_serial = None
+            while not stop_event.is_set():
+                output = self.run_adb("devices")
+                lines = [l for l in (output or "").splitlines()[1:] if l.strip()]
+                
+                # Check for a device without ':' (i.e. physical USB connection)
+                for line in lines:
+                    if "\tdevice" in line:
+                        serial = line.split()[0]
+                        if ":" not in serial:
+                            usb_serial = serial
+                            break
+                
+                if usb_serial:
+                    break
+                time.sleep(1.0)
+
+            if stop_event.is_set():
+                return
+
+            GLib.idle_add(status_label.set_markup, f"<span size='large' weight='bold'>Device found!</span>\n\nDetecting device Wi-Fi IP address...")
+            
+            # Fetch wlan0 IP address
+            ip_address = None
+            
+            # Method 1: ip addr
+            ip_out = self.run_adb("shell ip -f inet addr show wlan0", usb_serial)
+            for line in ip_out.splitlines():
+                if "inet " in line:
+                    parts = line.strip().split()
+                    for p in parts:
+                        if p.startswith("inet"):
+                            continue
+                        ip = p.split('/')[0]
+                        if ip.count('.') == 3:
+                            ip_address = ip
+                            break
+                    if ip_address: break
+
+            # Method 2: getprop
+            if not ip_address:
+                prop_out = self.run_adb("shell getprop dhcp.wlan0.ipaddress", usb_serial).strip()
+                if prop_out and "error" not in prop_out.lower() and prop_out.count('.') == 3:
+                    ip_address = prop_out
+
+            # Method 3: ip route
+            if not ip_address:
+                route_out = self.run_adb("shell ip route", usb_serial)
+                for line in route_out.splitlines():
+                    if "src " in line and "wlan0" in line:
+                        parts = line.strip().split()
+                        try:
+                            idx = parts.index("src")
+                            ip = parts[idx+1]
+                            if ip.count('.') == 3:
+                                ip_address = ip
+                                break
+                        except:
+                            pass
+
+            if not ip_address:
+                GLib.idle_add(spinner.stop)
+                GLib.idle_add(spinner.set_visible, False)
+                GLib.idle_add(status_label.set_markup, (
+                    "<span size='large' weight='bold' color='red'>Wi-Fi IP Not Detected</span>\n\n"
+                    "Make sure your phone is connected to the same Wi-Fi network as this PC, "
+                    "then close and try again."
+                ))
+                GLib.idle_add(close_btn.set_label, "Close")
+                return
+
+            GLib.idle_add(status_label.set_markup, f"<span size='large' weight='bold'>IP Detected: {ip_address}</span>\n\nActivating wireless ADB server on phone...")
+
+            # Restart adbd listening on port 5555
+            res = self.run_adb("tcpip 5555", usb_serial)
+            time.sleep(1.5) # give port a moment to open
+
+            if stop_event.is_set():
+                return
+
+            if "restarting" in res.lower() or "error" not in res.lower():
+                GLib.idle_add(status_label.set_markup, f"<span size='large' weight='bold'>Connecting...</span>\n\nPC connecting wirelessly to {ip_address}:5555...")
+                
+                # Establish TCP connection
+                conn_res = self.run_adb(f"connect {ip_address}:5555")
+                
+                GLib.idle_add(spinner.stop)
+                GLib.idle_add(spinner.set_visible, False)
+
+                if "connected" in conn_res.lower():
+                    GLib.idle_add(status_label.set_markup, (
+                        f"<span size='large' weight='bold' color='green'>Configuration Successful!</span>\n\n"
+                        f"Connected wirelessly to <tt>{ip_address}:5555</tt>.\n\n"
+                        "<b>You may now unplug the USB cable!</b>\n\n"
+                        "<i>Note: Remember that you must repeat this setup step if you reboot your phone, "
+                        "as Android resets wireless debugging settings on startup.</i>"
+                    ))
+                    # Trigger a refresh of the device list in the UI
+                    GLib.idle_add(lambda: self.on_refresh_clicked(self.refresh_btn))
+                else:
+                    GLib.idle_add(status_label.set_markup, (
+                        f"<span size='large' weight='bold' color='orange'>ADB tcpip Enabled</span>\n\n"
+                        f"Wireless mode enabled on phone, but PC failed to connect to <tt>{ip_address}:5555</tt>:\n"
+                        f"<small>{conn_res}</small>\n\n"
+                        "Make sure both devices are on the exact same Wi-Fi subnet."
+                    ))
+                GLib.idle_add(close_btn.set_label, "Finish")
+            else:
+                GLib.idle_add(spinner.stop)
+                GLib.idle_add(spinner.set_visible, False)
+                GLib.idle_add(status_label.set_markup, (
+                    "<span size='large' weight='bold' color='red'>Setup Failed</span>\n\n"
+                    f"Could not enable wireless debugging mode:\n<tt>{res}</tt>\n\n"
+                    "Please check the authorization dialog on your phone screen."
+                ))
+                GLib.idle_add(close_btn.set_label, "Close")
+
+        threading.Thread(target=run_assistant, daemon=True).start()
+        dialog.present()
 
     def _prepare_app_selector(self):
         if not self.serial:

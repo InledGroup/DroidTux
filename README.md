@@ -2,22 +2,32 @@
   <img src="static/logo.png" alt="DroidTux Logo" width="120">
 </p>
 
-<h1 align="center">DroidTux - Integrate your phone app's as desktop apps</h1>
+<h1 align="center">DroidTux</h1>
 
 ---
 
-DroidTux is a tool designed to seamlessly integrate your Android applications directly into your Linux desktop. It leverages `scrcpy` for screen mirroring and a small "Bridge" app on the device to extract original icons and labels, creating `.desktop` files that allow you to launch Android apps as if they were native.
+Droidtux is an application that acts as a scrcpy GUI, making the difficult simple. It allows you to integrate phone applications as desktop apps on your computer. You can select which applications to integrate and which not to. Decide the resolution, DPI and bitrate of these. It also allows you to use your phone as a virtual camera in Linux.
+
+> [!WARNING]
+> Keep Droidtux updated: configure the [Inled Repo for your distro](https://apt.inled.es).
 
 ### Features
-- **Native Integration:** Launch Android apps from your application menu (GNOME, KDE, XFCE, etc.).
-- **Icon Extraction:** Fetches real icons and names from the device.
-- **Automatic Sync:** Thanks to `udev` rules, DroidTux can automatically sync your apps when connecting your phone via USB.
-- **GTK Dashboard:** A simple interface to manage synchronization and view logs.
-- **Multidisplay:** Uses `scrcpy` capabilities to create virtual displays with custom resolutions.
+-**Synchronize all apps**: Automatically or manually, connect the phone and the apps will magically appear as if they were normal apps. It works in any Linux graphical environment.  
+
+-**Selective synchronization**: You may only want to sync one app or not others: well you can do it  
+
+-**Adjust EVERYTHING**: From the resolution to the bitrate, the DPI or the audio redirection so that it comes out through the PC or the speakers connected to it.  
+
+-**Virtual camera**: Don't you have a camera? Is the one on your computer more like a Nokia than a decent one? Well don't worry because with Droidtux your phone becomes a camera. You can choose which camera on your phone to use, its resolution, and even whether to redirect audio.  
+
+-**No cables, no ties**: You can do everything remotely (obviously the video will have more lag, depending on your network, how it is managed by the phone and the processor of the phone and PC).  
+
+-**Configure your phone for wireless with a wizard**: Connect the phone via USB the first time and click on the wireless mode configurator. Then disconnect and click on search for the device and that's it.  
+
 
 ### Prerequisites
-- **Linux:** Python 3, `scrcpy`, `adb`, and GTK3 libraries.
-- **Android:** USB Debugging enabled. Enabling "Install via USB" in developer options is highly recommended for the best experience.
+- **Linux:** Python 3, `scrcpy`, `adb`, and GTK4 libraries.
+- **Android:** Depuración por USB activada o wireless. Soporte para instalación de aplicaciones vía ADB (para instalar un simple apk compuesto por un único archivo Java que puedes auditar en el repo, que simplemente extrae los iconos de las apps)
 
 ### Installation
 1. Clone this repository.
@@ -52,6 +62,18 @@ To manually compile the Android bridge, you need the Android SDK (aapt2, d8, apk
 ```bash
 ./build_bridge.sh
 ```
+
+---
+
+### License    
+
+
+Licensed under MIT-INLED license. Learn more at [license.inled.es](https://license.inled.es) and how it benefits you.  
+
+---
+
+### Contribute   
+Do you have any idea? Pr's and issues are welcome! We will give you appropiate credit and you will appear as a contributor on any publication on social media.   
 
 ---
 *Developed by JaimeGH.*
