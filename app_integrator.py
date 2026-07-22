@@ -1395,11 +1395,23 @@ class DroidTuxApp(Adw.ApplicationWindow):
 
     def run_sync(self, selected_packages=None):
         if not self.serial:
-            self.update_progress("Error: No device selected", 0)
-            if not self.automatic:
+            if self.automatic:
+                self.log("Auto-detecting USB device...")
+                output = self.run_adb("devices")
+                for line in output.splitlines():
+                    if "\tdevice" in line:
+                        serial = line.split()[0]
+                        if ":" not in serial:
+                            self.serial = serial
+                            break
+                if not self.serial:
+                    self.update_progress("Error: No USB device found", 0)
+                    return
+            else:
+                self.update_progress("Error: No device selected", 0)
                 GLib.idle_add(self.sync_btn.set_sensitive, True)
                 GLib.idle_add(self.select_btn.set_sensitive, True)
-            return
+                return
 
         serial = self.serial
         self.log(f"Connected to {serial}")
@@ -1536,7 +1548,6 @@ def cleanup():
 class DroidTuxSplash(Gtk.Window):
     def __init__(self, app):
         super().__init__(application=app)
-        self.set_keep_above(True)
         self.set_decorated(False)
         self.set_resizable(False)
         self.set_default_size(250, 200)
