@@ -626,7 +626,7 @@ class DroidTuxApp(Adw.ApplicationWindow):
             else:
                 log_v4l2("Loading v4l2loopback module...")
                 result = subprocess.run(
-                    "sudo modprobe v4l2loopback exclusive_caps=1",
+                    "pkexec modprobe v4l2loopback exclusive_caps=1",
                     shell=True, capture_output=True, text=True
                 )
                 if result.returncode == 0:
