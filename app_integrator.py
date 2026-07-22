@@ -7,6 +7,7 @@ import json
 import time
 import webbrowser
 import socket
+import atexit
 from pathlib import Path
 import gi
 import sys
@@ -75,6 +76,7 @@ DEFAULT_SETTINGS = {
     "camera_id": "0",
     "camera_size": "1920x1080",
     "camera_audio": True,
+    "camera_audio_source": "output",
     "camera_show_window": False,
     "camera_high_speed": False
 }
@@ -101,6 +103,7 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.serial = None
         self.automatic = False
         self.devices_map = {}
+        self._camera_proc = None
 
         # Apply CSS
         style_provider = Gtk.CssProvider()
@@ -208,6 +211,10 @@ class DroidTuxApp(Adw.ApplicationWindow):
         self.connect_btn = Gtk.Button(label="Connect Wireless")
         self.connect_btn.connect("clicked", self.on_manual_connect_clicked)
         manual_box.append(self.connect_btn)
+
+        self.disconnect_btn = Gtk.Button(label="Disconnect")
+        self.disconnect_btn.connect("clicked", self.on_disconnect_clicked)
+        manual_box.append(self.disconnect_btn)
 
         # Main Card
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
@@ -392,24 +399,46 @@ class DroidTuxApp(Adw.ApplicationWindow):
         cam_grid.attach(self.cam_size_dropdown, 1, 1, 1, 1)
 
         # Camera Audio
-        self.cam_audio_check = Gtk.CheckButton(label="Capture microphone audio with camera")
+        self.cam_audio_check = Gtk.CheckButton(label="Capture audio with camera")
         self.cam_audio_check.set_active(bool(self.settings.get("camera_audio", True)))
         cam_grid.attach(self.cam_audio_check, 1, 2, 1, 1)
+
+        # Audio Source
+        cam_audio_src_label = Gtk.Label(label="Audio Source:")
+        cam_audio_src_label.set_xalign(1.0)
+        cam_grid.attach(cam_audio_src_label, 0, 3, 1, 1)
+        
+        cam_audio_src_opts = ["output (phone sounds)", "mic (microphone)", "playback (app audio)"]
+        self.cam_audio_src_dropdown = Gtk.DropDown.new_from_strings(cam_audio_src_opts)
+        cam_audio_src_val = self.settings.get("camera_audio_source", "output")
+        src_map = {"output": 0, "mic": 1, "playback": 2}
+        self.cam_audio_src_dropdown.set_selected(src_map.get(cam_audio_src_val, 0))
+        cam_grid.attach(self.cam_audio_src_dropdown, 1, 3, 1, 1)
 
         # Show Window
         self.cam_window_check = Gtk.CheckButton(label="Show scrcpy preview window")
         self.cam_window_check.set_active(bool(self.settings.get("camera_show_window", False)))
-        cam_grid.attach(self.cam_window_check, 1, 3, 1, 1)
+        cam_grid.attach(self.cam_window_check, 1, 4, 1, 1)
 
         # High Speed
         self.cam_highspeed_check = Gtk.CheckButton(label="Enable high-speed camera mode (slow motion)")
         self.cam_highspeed_check.set_active(bool(self.settings.get("camera_high_speed", False)))
-        cam_grid.attach(self.cam_highspeed_check, 1, 4, 1, 1)
+        cam_grid.attach(self.cam_highspeed_check, 1, 5, 1, 1)
 
         # V4L2 Setup Button
         v4l2_setup_btn = Gtk.Button(label="Setup V4L2 Loopback (run as root)")
         v4l2_setup_btn.connect("clicked", self.on_v4l2_setup_clicked)
-        cam_grid.attach(v4l2_setup_btn, 1, 5, 1, 1)
+        cam_grid.attach(v4l2_setup_btn, 1, 6, 1, 1)
+
+        # Audio capture note
+        audio_note = Gtk.Label()
+        audio_note.set_markup(
+            "<span size='x-small'>Audio: scrcpy outputs phone audio to PC speakers. "
+            "In OBS, add an 'Audio Output Capture' source to capture it.</span>"
+        )
+        audio_note.set_wrap(True)
+        audio_note.set_justify(Gtk.Justification.CENTER)
+        cam_grid.attach(audio_note, 0, 7, 2, 1)
 
         # Save Button
         save_btn = Gtk.Button(label="SAVE CHANGES")
@@ -511,6 +540,12 @@ class DroidTuxApp(Adw.ApplicationWindow):
         cam_size_item = self.cam_size_dropdown.get_selected_item()
         self.settings["camera_size"] = cam_size_item.get_string() if cam_size_item else "1920x1080"
         self.settings["camera_audio"] = self.cam_audio_check.get_active()
+        
+        cam_audio_src_item = self.cam_audio_src_dropdown.get_selected_item()
+        src_str = cam_audio_src_item.get_string() if cam_audio_src_item else "output"
+        src_val = "output" if "output" in src_str else ("mic" if "mic" in src_str else "playback")
+        self.settings["camera_audio_source"] = src_val
+        
         self.settings["camera_show_window"] = self.cam_window_check.get_active()
         self.settings["camera_high_speed"] = self.cam_highspeed_check.get_active()
         
@@ -830,6 +865,17 @@ class DroidTuxApp(Adw.ApplicationWindow):
             
         threading.Thread(target=run_connect, daemon=True).start()
 
+    def on_disconnect_clicked(self, btn):
+        if not self.serial:
+            return
+        
+        self.log(f"Disconnecting {self.serial}...")
+        self._kill_scrcpy_processes()
+        self.run_adb(f"disconnect {self.serial}")
+        cleanup()
+        self.log("Disconnected and cleaned up.")
+        GLib.idle_add(lambda: self.on_refresh_clicked(self.refresh_btn))
+
     def on_sync_clicked(self, btn):
         self.sync_btn.set_sensitive(False)
         self.progress_bar.set_visible(True)
@@ -862,6 +908,10 @@ class DroidTuxApp(Adw.ApplicationWindow):
         return False
 
     def on_camera_clicked(self, btn):
+        if self._camera_proc and self._camera_proc.poll() is None:
+            self._stop_camera(btn)
+            return
+        
         if not self.serial:
             self._show_error_dialog("No device selected.")
             return
@@ -872,13 +922,14 @@ class DroidTuxApp(Adw.ApplicationWindow):
         camera_id = self.settings.get("camera_id", "0")
         camera_size = self.settings.get("camera_size", "1920x1080")
         camera_audio = self.settings.get("camera_audio", True)
+        camera_audio_source = self.settings.get("camera_audio_source", "output")
         camera_show_window = self.settings.get("camera_show_window", False)
         camera_high_speed = self.settings.get("camera_high_speed", False)
         
         GLib.idle_add(self._set_button_spinner, btn, True, "Starting Camera...")
         
         # Safe fallback: stop spinner after 3 seconds anyway
-        GLib.timeout_add_seconds(3, lambda: self._set_button_spinner(btn, False, "PHONE CAMERA") and False)
+        GLib.timeout_add_seconds(3, lambda: self._set_button_spinner(btn, False, "STOP CAMERA") and False)
         
         def run_camera():
             self.log(f"Starting phone camera feed on {self.serial}...")
@@ -893,7 +944,9 @@ class DroidTuxApp(Adw.ApplicationWindow):
             if camera_high_speed:
                 cmd += " --camera-high-speed"
             
-            if not camera_audio:
+            if camera_audio:
+                cmd += f" --audio-source={camera_audio_source}"
+            else:
                 cmd += " --no-audio"
             
             if camera_show_window:
@@ -920,6 +973,7 @@ class DroidTuxApp(Adw.ApplicationWindow):
                     text=True,
                     bufsize=1
                 )
+                self._camera_proc = proc
                 
                 spinner_active = True
                 while True:
@@ -928,17 +982,32 @@ class DroidTuxApp(Adw.ApplicationWindow):
                         break
                     print(f"[scrcpy] {line.strip()}")
                     if spinner_active and ("Texture:" in line or "v4l2-sink" in line or "INFO: Renderer:" in line):
-                        GLib.idle_add(self._set_button_spinner, btn, False, "PHONE CAMERA")
+                        GLib.idle_add(self._set_button_spinner, btn, False, "STOP CAMERA")
                         spinner_active = False
                 
                 proc.wait()
+                self._camera_proc = None
                 if spinner_active:
+                    GLib.idle_add(self._set_button_spinner, btn, False, "PHONE CAMERA")
+                else:
                     GLib.idle_add(self._set_button_spinner, btn, False, "PHONE CAMERA")
             except Exception as e:
                 self.log(f"Error starting camera: {e}")
+                self._camera_proc = None
                 GLib.idle_add(self._set_button_spinner, btn, False, "PHONE CAMERA")
             
         threading.Thread(target=run_camera, daemon=True).start()
+
+    def _stop_camera(self, btn):
+        if self._camera_proc and self._camera_proc.poll() is None:
+            self._camera_proc.terminate()
+            try:
+                self._camera_proc.wait(timeout=3)
+            except:
+                self._camera_proc.kill()
+            self._camera_proc = None
+            self.log("Camera stopped.")
+        GLib.idle_add(self._set_button_spinner, btn, False, "PHONE CAMERA")
 
     def on_tcpip_clicked(self, btn):
         dialog = Adw.Window(
@@ -1315,8 +1384,14 @@ class DroidTuxApp(Adw.ApplicationWindow):
             
             if not found:
                 print(f"[Watchdog] Device {self.serial} disconnected. Cleaning up.")
+                self._kill_scrcpy_processes()
                 cleanup()
                 os._exit(0)
+
+    def _kill_scrcpy_processes(self):
+        try:
+            subprocess.run("pkill -f 'scrcpy.*'", shell=True, timeout=5)
+        except: pass
 
     def run_sync(self, selected_packages=None):
         if not self.serial:
@@ -1507,13 +1582,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.remove:
+        subprocess.run("pkill -f 'scrcpy.*'", shell=True, timeout=5)
         cleanup()
         sys.exit(0)
 
     app = Adw.Application(application_id="com.droidtux.dashboard", flags=Gio.ApplicationFlags.FLAGS_NONE)
 
+    def on_shutdown(application):
+        subprocess.run("pkill -f 'scrcpy.*'", shell=True, timeout=5)
+        cleanup()
+
+    app.connect("shutdown", on_shutdown)
+
     def on_activate(application):
-        main_win = DroidTuxApp(application)
         if args.add:
             settings = load_settings()
             if not settings.get("auto_sync", False):
@@ -1522,14 +1603,25 @@ if __name__ == "__main__":
                 return
 
             print("Starting automatic sync (Splash Mode)...")
+            splash = DroidTuxSplash(application)
+            splash.present()
+            
+            main_win = DroidTuxApp(application)
             main_win.automatic = True
-            main_win.splash = DroidTuxSplash(application)
-            main_win.splash.present()
+            main_win.splash = splash
+            main_win.hide()
             threading.Thread(target=main_win.run_sync, daemon=True).start()
         else:
+            main_win = DroidTuxApp(application)
             if args.settings:
                 main_win.stack.set_visible_child_name("settings")
             main_win.present()
 
     app.connect("activate", on_activate)
+
+    def _exit_cleanup():
+        subprocess.run("pkill -f 'scrcpy.*'", shell=True, timeout=5)
+        cleanup()
+    atexit.register(_exit_cleanup)
+
     app.run([sys.argv[0]])
