@@ -1586,13 +1586,18 @@ if __name__ == "__main__":
         cleanup()
         sys.exit(0)
 
+    # Kill any previous instance to avoid D-Bus application_id conflict
+    my_pid = os.getpid()
+    result = subprocess.run("pgrep -f 'app_integrator.py'", shell=True, capture_output=True, text=True)
+    for pid_str in result.stdout.strip().split('\n'):
+        pid_str = pid_str.strip()
+        if pid_str and int(pid_str) != my_pid:
+            try:
+                os.kill(int(pid_str), 9)
+            except: pass
+    time.sleep(0.3)
+
     app = Adw.Application(application_id="com.droidtux.dashboard", flags=Gio.ApplicationFlags.FLAGS_NONE)
-
-    def on_shutdown(application):
-        subprocess.run("pkill -f 'scrcpy.*'", shell=True, timeout=5)
-        cleanup()
-
-    app.connect("shutdown", on_shutdown)
 
     def on_activate(application):
         if args.add:
@@ -1618,10 +1623,4 @@ if __name__ == "__main__":
             main_win.present()
 
     app.connect("activate", on_activate)
-
-    def _exit_cleanup():
-        subprocess.run("pkill -f 'scrcpy.*'", shell=True, timeout=5)
-        cleanup()
-    atexit.register(_exit_cleanup)
-
     app.run([sys.argv[0]])
